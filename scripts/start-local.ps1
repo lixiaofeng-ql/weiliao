@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # ============================================================
 # 微聊 - 一键启动本地后端 + 公网隧道
 #   .\scripts\start-local.ps1            仅本地启动
@@ -76,7 +76,7 @@ Write-Step "公网地址: $url" -ForegroundColor Green
 
 # ---------- 5. 回写 config.js ----------
 Write-Step '更新 client/public/config.js'
-$host = ([Uri]$url).Host
+$wsHost = ([Uri]$url).Host
 $content = @"
 /**
  * 微聊 前端运行时配置
@@ -88,21 +88,26 @@ window.WL_CONFIG = {
   // 后端接口根地址
   apiBase: '$url',
   // WebSocket 地址
-  wsBase: 'wss://$host/ws'
+  wsBase: 'wss://$wsHost/ws'
 };
 "@
-Set-Content -Path $cfg -Value $content -Encoding utf8
+[IO.File]::WriteAllText($cfg, $content, [Text.UTF8Encoding]::new($false))
 Write-Step 'config.js 已更新' -ForegroundColor Green
 
 # ---------- 6. 可选：推送到 GitHub ----------
 if ($args -contains '--push') {
   Write-Step '推送到 GitHub (Pages 自动发布)...'
   Push-Location $root
-  git add client/public/config.js
-  git commit -m 'chore: 更新后端公网地址' | Out-Null
-  git push origin main
-  Pop-Location
-  Write-Step '已推送，等待约 1-2 分钟生效' -ForegroundColor Green
+  try {
+    git add client/public/config.js
+    git commit -m 'chore: 更新后端公网地址' 2>&1 | Out-Null
+    git push origin main 2>&1 | Out-Null
+    Write-Step '已推送，等待约 1-2 分钟 Pages 生效' -ForegroundColor Green
+  } catch {
+    Write-Warning "推送失败：$($_.Exception.Message)"
+  } finally {
+    Pop-Location
+  }
 }
 
 Write-Host ''
