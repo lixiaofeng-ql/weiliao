@@ -59,6 +59,8 @@ export function publicUser(user) {
     username: user.username,
     nickname: user.nickname || user.username,
     avatarColor: user.avatarColor || '#2b6de8',
+    // 自定义头像图片地址（为空则回退为 avatarColor + 首字）
+    avatar: user.avatar || '',
     isAdmin: !!user.isAdmin,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt
@@ -73,6 +75,7 @@ export function createUser({ username, password, nickname, isAdmin = false }) {
     passwordSalt: '',
     passwordHash: '',
     avatarColor: randomColor(),
+    avatar: '',
     isAdmin,
     createdAt: Date.now(),
     lastLoginAt: null

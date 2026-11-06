@@ -121,8 +121,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { WebSocket } = require('../server/node_modules/ws');
 const got = [];
-const wsA = new WebSocket(`ws://localhost:3000/ws?token=${A}`);
-const wsB = new WebSocket(`ws://localhost:3000/ws?token=${B}`);
+// WS 地址跟随 BASE，保证隔离端口下也能测到
+const WS_BASE = BASE.replace(/^http/, 'ws');
+const wsA = new WebSocket(`${WS_BASE}/ws?token=${A}`);
+const wsB = new WebSocket(`${WS_BASE}/ws?token=${B}`);
 await new Promise((r) => { let n = 0; const t = setInterval(() => { if (++n > 40 || (wsA.readyState === 1 && wsB.readyState === 1)) { clearInterval(t); r(); } }, 50); });
 check('WS 连接建立', wsA.readyState === 1 && wsB.readyState === 1);
 wsB.on('message', (d) => { const m = JSON.parse(d.toString()); if (m.action === 'new_message') got.push(m.message); });
@@ -130,10 +132,64 @@ await new Promise((r) => setTimeout(r, 200));
 await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '实时消息测试' }, token: A });
 await new Promise((r) => setTimeout(r, 600));
 check('bob 通过 WS 实时收到消息', got.some((m) => m.content === '实时消息测试'), got);
-const badWs = new WebSocket('ws://localhost:3000/ws?token=invalid');
+const badWs = new WebSocket(`${WS_BASE}/ws?token=invalid`);
 await new Promise((r) => setTimeout(r, 400));
 check('无效 token 的 WS 被拒绝', badWs.readyState === 3, badWs.readyState);
 wsA.close(); wsB.close();
+
+// 8. 个人资料 / 头像
+console.log('8. 个人资料与头像');
+const prof1 = await j('/api/auth/profile', { method: 'POST', body: { nickname: '爱丽丝改名' }, token: A });
+check('修改昵称成功', prof1.success && prof1.user.nickname === '爱丽丝改名', prof1);
+const prof2 = await j('/api/auth/profile', { method: 'POST', body: { avatarColor: '#0f8a5f' }, token: A });
+check('修改头像底色成功', prof2.success && prof2.user.avatarColor === '#0f8a5f', prof2);
+const profBad = await j('/api/auth/profile', { method: 'POST', body: { avatar: 'javascript:alert(1)' }, token: A });
+check('非法头像地址被拒绝', profBad.success === false, profBad);
+// 上传 1x1 PNG
+const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const up = await j('/api/upload', { method: 'POST', body: { dataUrl: png, prefix: 'avatar' }, token: A });
+check('上传头像图片成功', up.success && up.url.startsWith('/uploads/'), up);
+const prof3 = await j('/api/auth/profile', { method: 'POST', body: { avatar: up.url }, token: A });
+check('绑定自定义头像成功', prof3.success && prof3.user.avatar === up.url, prof3);
+const me = await j('/api/auth/me', { token: A });
+check('头像信息对外可见', me.success && me.user.avatar === up.url, me.user);
+const profBadColor = await j('/api/auth/profile', { method: 'POST', body: { avatarColor: 'red' }, token: A });
+check('非法头像颜色被拒绝', profBadColor.success === false, profBadColor);
+
+// 9. 自定义表情包
+console.log('9. 自定义表情包');
+const stList0 = await j('/api/stickers', { token: A });
+check('表情包列表可读', stList0.success && Array.isArray(stList0.stickers), stList0);
+const stAdd = await j('/api/stickers', { method: 'POST', body: { url: '/uploads/sticker_test.gif', name: '测试表情' }, token: A });
+check('添加自定义表情包成功', stAdd.success && stAdd.sticker.id, stAdd);
+const stList1 = await j('/api/stickers', { token: A });
+check('我的表情包包含刚添加的', stList1.stickers.some((s) => s.id === stAdd.sticker.id), stList1);
+const stDel = await j('/api/stickers/' + stAdd.sticker.id, { method: 'DELETE', token: A });
+check('删除自定义表情包成功', stDel.success, stDel);
+const stDelOther = await j('/api/stickers/s_nonexist', { method: 'DELETE', token: B });
+check('删除他人表情包被拒', stDelOther.success === false, stDelOther);
+
+// 10. 发送图片 / 表情包消息
+console.log('10. 图片与表情包消息');
+const imgMsg = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '/uploads/x.png', type: 'image' }, token: A });
+check('发送图片消息成功', imgMsg.success && imgMsg.message.type === 'image', imgMsg);
+const stickerMsg = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: 'stickers/f-huaji.gif', type: 'sticker' }, token: A });
+check('发送表情包消息成功', stickerMsg.success && stickerMsg.message.type === 'sticker', stickerMsg);
+const imgConvs = await j('/api/conversations', { token: B });
+const dmConv = imgConvs.conversations.find((c) => c.conversationId.startsWith('dm:'));
+check('会话列表表情包摘要为[表情包]', dmConv && dmConv.lastMessage === '[表情包]', dmConv);
+
+// 11. 群聊删除（仅群主）
+console.log('11. 群聊解散权限');
+const gOwner = await j('/api/groups', { method: 'POST', body: { name: '待解散群', members: [bob.user.id] }, token: A });
+check('创建测试群成功', gOwner.success, gOwner);
+const delGid = gOwner.group.id;
+const notOwner = await j('/api/groups/' + delGid, { method: 'DELETE', token: B });
+check('非群主不能解散群聊', notOwner.success === false, notOwner);
+const owner = await j('/api/groups/' + delGid, { method: 'DELETE', token: A });
+check('群主可以解散群聊', owner.success, owner);
+const gone = await j('/api/groups', { token: B });
+check('解散后群聊不再出现在列表', !gone.groups.some((g) => g.id === delGid), gone.groups);
 
 console.log(`\n=== 结果: 通过 ${pass} / 失败 ${fail} ===\n`);
 process.exit(fail > 0 ? 1 : 0);

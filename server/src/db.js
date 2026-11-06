@@ -7,7 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.resolve(__dirname, '..', 'data');
+// 支持用 WL_DATA_DIR 指定数据目录（测试隔离用），默认 server/data
+const DATA_DIR = process.env.WL_DATA_DIR
+  ? path.resolve(process.env.WL_DATA_DIR)
+  : path.resolve(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const EMPTY = {
@@ -17,6 +20,8 @@ const EMPTY = {
   groups: [],
   messages: [],
   reads: {},
+  // 用户自定义表情包：{ id, userId, url, name, createdAt }
+  stickers: [],
   seq: {}
 };
 

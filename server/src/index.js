@@ -17,6 +17,7 @@ import {
   createGroup,
   joinGroup,
   leaveGroup,
+  deleteGroup,
   listGroups,
   listAllGroups,
   serializeGroup,
@@ -25,8 +26,12 @@ import {
   listMessages,
   listConversations,
   markRead,
-  dmConversationId
+  dmConversationId,
+  addSticker,
+  listStickers,
+  removeSticker
 } from './logic.js';
+import { saveImage, removeUpload, ensureUploadDir, UPLOAD_DIR } from './upload.js';
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -115,6 +120,79 @@ app.post('/api/auth/logout', auth, (req, res) => {
 
 app.get('/api/auth/me', auth, (req, res) => {
   res.json({ success: true, user: publicUser(req.user) });
+});
+
+// ============ 个人资料 ============
+
+/** 修改昵称 / 头像 */
+app.post('/api/auth/profile', auth, (req, res) => {
+  const { nickname, avatar, avatarColor } = req.body || {};
+
+  if (nickname !== undefined) {
+    const n = String(nickname).trim();
+    if (!n) return res.json({ success: false, message: '昵称不能为空' });
+    if (n.length > 20) return res.json({ success: false, message: '昵称最多 20 个字符' });
+    req.user.nickname = n;
+  }
+
+  if (avatar !== undefined) {
+    const a = String(avatar || '').trim();
+    // 允许清空头像（回退为首字色块）
+    if (a) {
+      if (!a.startsWith('/uploads/') && !/^https?:\/\//i.test(a)) {
+        return res.json({ success: false, message: '头像地址不合法' });
+      }
+      // 换头像时删掉旧文件
+      if (req.user.avatar && req.user.avatar.startsWith('/uploads/')) {
+        removeUpload(req.user.avatar);
+      }
+    }
+    req.user.avatar = a;
+  }
+
+  if (avatarColor !== undefined) {
+    const c = String(avatarColor || '').trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(c)) {
+      return res.json({ success: false, message: '头像颜色格式不合法' });
+    }
+    req.user.avatarColor = c;
+  }
+
+  save();
+  // 广播资料变更，好友/群成员界面能实时更新
+  broadcastProfileChange(req.user);
+  res.json({ success: true, user: publicUser(req.user) });
+});
+
+/** 上传图片（头像 / 表情包） */
+app.post('/api/upload', auth, (req, res) => {
+  const { dataUrl, prefix } = req.body || {};
+  const result = saveImage(dataUrl, prefix === 'sticker' ? 'sticker' : 'avatar');
+  if (result.error) return res.json({ success: false, message: result.error });
+  res.json({ success: true, url: result.url, bytes: result.bytes });
+});
+
+// ============ 自定义表情包 ============
+
+app.get('/api/stickers', auth, (req, res) => {
+  res.json({ success: true, stickers: listStickers(req.user.id) });
+});
+
+app.post('/api/stickers', auth, (req, res) => {
+  const { url, name } = req.body || {};
+  if (!url || !url.startsWith('/uploads/')) {
+    return res.json({ success: false, message: '表情包地址不合法' });
+  }
+  const result = addSticker(req.user.id, { url, name });
+  if (result.error) return res.json({ success: false, message: result.error });
+  res.json({ success: true, sticker: result.sticker });
+});
+
+app.delete('/api/stickers/:id', auth, (req, res) => {
+  const result = removeSticker(req.user.id, req.params.id);
+  if (result.error) return res.json({ success: false, message: result.error });
+  removeUpload(result.url);
+  res.json({ success: true });
 });
 
 // ============ 好友接口 ============
@@ -210,6 +288,24 @@ app.post('/api/groups/:id/join', auth, (req, res) => {
 app.post('/api/groups/:id/leave', auth, (req, res) => {
   const result = leaveGroup(req.user.id, req.params.id);
   if (result.error) return res.json({ success: false, message: result.error });
+  res.json({ success: true });
+});
+
+/** 解散群聊：仅群主 */
+app.delete('/api/groups/:id', auth, (req, res) => {
+  const gid = req.params.id;
+  const g = db().groups.find((x) => x.id === gid);
+  if (!g) return res.json({ success: false, message: '群不存在' });
+  if (g.ownerId !== req.user.id) {
+    return res.status(403).json({ success: false, message: '只有群主才能解散该群聊' });
+  }
+  // 先通知成员，再删除
+  const memberIds = g.memberIds.slice();
+  const result = deleteGroup(req.user.id, gid);
+  if (result.error) return res.json({ success: false, message: result.error });
+  for (const uid of memberIds) {
+    notifyUser(uid, 'group_deleted', { groupId: gid, groupName: g.name });
+  }
   res.json({ success: true });
 });
 
@@ -313,6 +409,8 @@ app.delete('/api/admin/users/:id', auth, requireAdmin, (req, res) => {
 
 // ============ 静态前端 ============
 const CLIENT_DIST = fileURLToPath(new URL('../../client/public/', import.meta.url));
+ensureUploadDir();
+app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use(express.static(CLIENT_DIST, {
   setHeaders: (res) => {
     // 开发阶段禁用缓存，避免改了前端却看到旧版本
@@ -320,6 +418,7 @@ app.use(express.static(CLIENT_DIST, {
   }
 }));
 console.log('[server] 静态目录:', CLIENT_DIST);
+console.log('[server] 上传目录:', UPLOAD_DIR);
 
 // ============ WebSocket ============
 const server = http.createServer(app);
@@ -442,6 +541,14 @@ function notifyAdminsOnline() {
   for (const ws of wss.clients) {
     if (!ws.userId) continue;
     sendToWs(ws, { action: 'online_update', online });
+  }
+}
+
+/** 广播用户资料变更（头像 / 昵称） */
+function broadcastProfileChange(user) {
+  const payload = { action: 'profile_updated', user: publicUser(user) };
+  for (const ws of wss.clients) {
+    if (ws.userId) sendToWs(ws, payload);
   }
 }
 

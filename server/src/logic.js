@@ -147,6 +147,18 @@ export function leaveGroup(userId, groupId) {
   return { ok: true };
 }
 
+/** 解散群聊：仅群主可操作 */
+export function deleteGroup(userId, groupId) {
+  const g = db().groups.find((x) => x.id === groupId);
+  if (!g) return { error: '群不存在' };
+  if (g.ownerId !== userId) return { error: '只有群主才能解散该群聊' };
+  db().groups = db().groups.filter((x) => x.id !== groupId);
+  // 同时清理该群的消息与已读记录
+  db().messages = db().messages.filter((m) => m.conversationId !== `group:${groupId}`);
+  save();
+  return { ok: true, group: serializeGroup(g, userId) };
+}
+
 export function listGroups(userId) {
   return db()
     .groups.filter((g) => g.memberIds.includes(userId))
@@ -182,10 +194,45 @@ export function isGroupMember(groupId, userId) {
   return !!g && g.memberIds.includes(userId);
 }
 
+// ============ 自定义表情包 ============
+
+/** 添加一张自定义表情包 */
+export function addSticker(userId, { url, name = '' }) {
+  if (!url) return { error: '缺少表情包图片' };
+  const sticker = {
+    id: nextId('s'),
+    userId,
+    url,
+    name: String(name).trim().slice(0, 30),
+    createdAt: Date.now()
+  };
+  db().stickers.push(sticker);
+  save();
+  return { sticker };
+}
+
+/** 我上传的自定义表情包 */
+export function listStickers(userId) {
+  return db()
+    .stickers.filter((s) => s.userId === userId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map((s) => ({ ...s }));
+}
+
+/** 删除自定义表情包（仅本人） */
+export function removeSticker(userId, stickerId) {
+  const s = db().stickers.find((x) => x.id === stickerId);
+  if (!s) return { error: '表情包不存在' };
+  if (s.userId !== userId) return { error: '无权删除他人的表情包' };
+  db().stickers = db().stickers.filter((x) => x.id !== stickerId);
+  save();
+  return { ok: true, url: s.url };
+}
+
 // ============ 消息 ============
 
 /**
- * 保存消息。type: text | emoji | image
+ * 保存消息。type: text | emoji | image | sticker
  * 单聊：conversationId = `dm:<userIdA>:<userIdB>`（按 id 排序）
  * 群聊：conversationId = `group:<groupId>`
  */
@@ -194,7 +241,11 @@ export function createMessage({ fromUserId, toType, toId, content, type = 'text'
   if (!sender) return { error: '用户不存在' };
   const text = String(content || '').trim();
   if (!text) return { error: '消息内容不能为空' };
-  if (text.length > 5000) return { error: '消息过长' };
+
+  const msgType = ['text', 'emoji', 'image', 'sticker'].includes(type) ? type : 'text';
+  if (msgType === 'text' && text.length > 5000) return { error: '消息过长' };
+  // 图片/表情包内容为 URL，长度限制放宽
+  if (msgType !== 'text' && text.length > 500) return { error: '内容过长' };
 
   let conversationId = '';
   let participants = [];
@@ -217,7 +268,7 @@ export function createMessage({ fromUserId, toType, toId, content, type = 'text'
   const msg = {
     id: nextId('m'),
     conversationId,
-    type,
+    type: msgType,
     content: text,
     from: fromUserId,
     fromName: sender.nickname || sender.username,
@@ -267,6 +318,13 @@ export function dmConversationId(a, b) {
 
 // ============ 会话列表 ============
 
+/** 会话列表里显示的最后一条消息摘要 */
+export function previewText(m) {
+  if (m.type === 'image') return '[图片]';
+  if (m.type === 'sticker') return '[表情包]';
+  return m.content;
+}
+
 /** 我最近的消息会话，按最后一条消息时间倒序 */
 export function listConversations(userId) {
   const convMap = new Map();
@@ -290,7 +348,7 @@ export function listConversations(userId) {
           targetId: gid,
           title: g ? g.name : '已解散的群',
           avatarColor: g ? g.avatarColor : '#8f959e',
-          lastMessage: m.content,
+          lastMessage: previewText(m),
           lastTime: m.createdAt,
           unread
         };
@@ -303,7 +361,8 @@ export function listConversations(userId) {
         targetId: peerId,
         title: peer ? peer.nickname || peer.username : '未知用户',
         avatarColor: peer ? peer.avatarColor : '#8f959e',
-        lastMessage: m.content,
+        avatar: peer ? peer.avatar || '' : '',
+        lastMessage: previewText(m),
         lastTime: m.createdAt,
         unread
       };

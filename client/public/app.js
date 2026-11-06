@@ -40,8 +40,87 @@ const state = {
   messages: [],
   expandedFb: {},
   selectedMembers: new Set(),
-  searchUsers: []
+  searchUsers: [],
+  stickers: [],          // 我的自定义表情包
+  builtInStickers: [],   // 内置斗图
+  emojiTab: 'emoji',
+  unreadTotal: 0,
+  notify: {
+    sound: localStorage.getItem('wl_sound') !== '0',
+    desktop: localStorage.getItem('wl_desktop') === '1',
+    badge: localStorage.getItem('wl_badge') !== '0'
+  }
 };
+
+/* ---------------- 提示音（WebAudio 合成，无需音频文件） ---------------- */
+let audioCtx = null;
+function playNotificationSound() {
+  if (!state.notify.sound) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    // 微信式双音「叮—咚」
+    [
+      { f: 880, t: 0, d: 0.14 },
+      { f: 1174.7, t: 0.13, d: 0.22 }
+    ].forEach((n) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(n.f, now + n.t);
+      gain.gain.setValueAtTime(0.0001, now + n.t);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + n.t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.d);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(now + n.t);
+      osc.stop(now + n.t + n.d + 0.02);
+    });
+  } catch (e) {
+    console.warn('[sound] 播放失败', e);
+  }
+}
+
+/* ---------------- 标题未读角标 ---------------- */
+function updateTitleBadge() {
+  const n = state.unreadTotal;
+  const base = '微聊';
+  if (!state.notify.badge || n <= 0) {
+    document.title = base;
+    return;
+  }
+  document.title = `(${n > 99 ? '99+' : n}) ${base}`;
+}
+
+/* ---------------- 桌面通知 ---------------- */
+function requestNotifyPermission() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function showDesktopNotification(title, body) {
+  if (!state.notify.desktop) return;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, {
+      body,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      tag: 'wl-' + Date.now(),
+      silent: true
+    });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
+  } catch (e) {
+    console.warn('[notify] 桌面通知失败', e);
+  }
+}
 
 /* ==================== 工具 ==================== */
 const $ = (id) => document.getElementById(id);
@@ -86,6 +165,28 @@ function formatDateTime(ts) {
 
 function initial(name) {
   return String(name || '?').trim().charAt(0).toUpperCase();
+}
+
+/**
+ * 渲染头像 HTML：有图片用图片，否则用首字 + 底色。
+ * @param {string} name 昵称
+ * @param {string} color 底色
+ * @param {string} avatarUrl 图片地址
+ * @param {string} cls 额外的 class
+ */
+function avatarHtml(name, color, avatarUrl, cls = '') {
+  const style = `background:${escapeHtml(color || '#2b6de8')}`;
+  if (avatarUrl) {
+    return `<div class="avatar ${cls}" style="${style}"><img src="${escapeHtml(avatarUrl)}" alt="" loading="lazy" /></div>`;
+  }
+  return `<div class="avatar ${cls}" style="${style}">${escapeHtml(initial(name))}</div>`;
+}
+
+/** 上传地址补全（后端返回 /uploads/xxx 相对路径） */
+function absUrl(u) {
+  if (!u) return '';
+  if (/^https?:\/\//i.test(u) || u.startsWith('data:')) return u;
+  return API + u;
 }
 
 /* ==================== API ==================== */
@@ -176,6 +277,9 @@ function onLogin(res) {
   showMain();
   connectWS();
   refreshAll();
+  loadStickers();
+  loadBuiltInStickers();
+  requestNotifyPermission();
 }
 
 function logout(silent) {
@@ -193,20 +297,128 @@ function logout(silent) {
 
 $('logoutBtn').addEventListener('click', () => logout(false));
 
+/* ==================== 个人资料 ==================== */
+const AVATAR_COLORS = ['#2b6de8', '#0f8a5f', '#c47b0a', '#7c4dff', '#d43838', '#00a0a8', '#e06c9f', '#3f6f3f'];
+
+function renderColorRow() {
+  const row = $('colorRow');
+  if (!row) return;
+  const cur = (state.user && state.user.avatarColor) || '#2b6de8';
+  row.innerHTML = AVATAR_COLORS.map((c) => `
+    <button class="color-dot ${c === cur ? 'on' : ''}" data-color="${c}" style="background:${c}"></button>
+  `).join('');
+  row.querySelectorAll('[data-color]').forEach((b) => {
+    b.addEventListener('click', () => {
+      row.querySelectorAll('[data-color]').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+    });
+  });
+}
+
+/** 打开个人资料页 */
+function openProfile() {
+  const u = state.user;
+  $('profileNickname').value = u.nickname || '';
+  renderColorRow();
+  renderMyStickers();
+  showPage('profilePanel', '个人资料');
+}
+
+$('profileBtn')?.addEventListener('click', () => {
+  closeMenu();
+  openProfile();
+});
+
+/** 上传头像 */
+$('avatarEditBtn')?.addEventListener('click', () => $('avatarInput').click());
+
+$('avatarInput')?.addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    toast('头像上传中...');
+    const url = await uploadImage(file, 'avatar');
+    const res = await api('/api/auth/profile', { method: 'POST', body: { avatar: url } });
+    state.user = res.user;
+    renderMyAvatar();
+    toast('头像已更新', 'success');
+    refreshAll();
+  } catch (err) {
+    toast(err.message || '头像更新失败', 'error');
+  }
+});
+
+/** 保存昵称与底色 */
+$('saveProfileBtn')?.addEventListener('click', async () => {
+  const nickname = $('profileNickname').value.trim();
+  const on = $('colorRow').querySelector('.color-dot.on');
+  const avatarColor = on ? on.dataset.color : (state.user.avatarColor || '#2b6de8');
+  try {
+    const res = await api('/api/auth/profile', { method: 'POST', body: { nickname, avatarColor } });
+    state.user = res.user;
+    renderMyAvatar();
+    toast('资料已保存', 'success');
+    refreshAll();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+});
+
+/* ---------------- 通知设置 ---------------- */
+$('soundToggle')?.addEventListener('change', (e) => {
+  state.notify.sound = e.target.checked;
+  localStorage.setItem('wl_sound', e.target.checked ? '1' : '0');
+  if (e.target.checked) playNotificationSound(); // 试听
+});
+
+$('notifyToggle')?.addEventListener('change', (e) => {
+  state.notify.desktop = e.target.checked;
+  localStorage.setItem('wl_desktop', e.target.checked ? '1' : '0');
+  if (e.target.checked) requestNotifyPermission();
+});
+
+$('badgeToggle')?.addEventListener('change', (e) => {
+  state.notify.badge = e.target.checked;
+  localStorage.setItem('wl_badge', e.target.checked ? '1' : '0');
+  updateTitleBadge();
+});
+
 /* ==================== 视图切换 ==================== */
 function showMain() {
   $('authView').classList.add('hidden');
   $('mainView').classList.remove('hidden');
   $('menuNick').textContent = state.user.nickname || state.user.username;
   $('menuAccount').textContent = '@' + state.user.username;
-  $('menuAvatar').textContent = initial(state.user.nickname || state.user.username);
-  $('menuAvatar').style.background = state.user.avatarColor || '#2b6de8';
+  renderMyAvatar();
   document.querySelectorAll('.admin-only').forEach((el) => {
     el.classList.toggle('hidden', !state.user.isAdmin);
   });
+  // 首次进入时同步一次通知开关状态
+  $('soundToggle').checked = state.notify.sound;
+  $('notifyToggle').checked = state.notify.desktop;
+  $('badgeToggle').checked = state.notify.badge;
 }
 
-const PAGES = ['conversationsPage', 'friendsPanel', 'groupsPanel', 'chatPage', 'adminPanel'];
+/** 渲染侧边菜单与资料页里的「我」头像 */
+function renderMyAvatar() {
+  const u = state.user;
+  if (!u) return;
+  const color = u.avatarColor || '#2b6de8';
+  const img = u.avatar
+    ? `<img src="${escapeHtml(absUrl(u.avatar))}" alt="" />`
+    : escapeHtml(initial(u.nickname || u.username));
+  const menuAvatar = $('menuAvatar');
+  menuAvatar.style.background = color;
+  menuAvatar.innerHTML = img;
+  const pa = $('profileAvatar');
+  if (pa) {
+    pa.style.background = color;
+    pa.innerHTML = img;
+  }
+}
+
+const PAGES = ['conversationsPage', 'friendsPanel', 'groupsPanel', 'chatPage', 'adminPanel', 'profilePanel'];
 
 function showPage(pageId, title) {
   PAGES.forEach((p) => $(p).classList.toggle('hidden', p !== pageId));
@@ -316,7 +528,7 @@ function renderConversations() {
   $('convEmpty').classList.toggle('hidden', list.length > 0);
   box.innerHTML = list.map((c) => `
     <button class="conv-item" data-conv="${escapeHtml(c.conversationId)}" data-type="${c.type}" data-target="${escapeHtml(c.targetId)}">
-      <div class="avatar" style="background:${escapeHtml(c.avatarColor || '#2b6de8')}">${escapeHtml(initial(c.title))}</div>
+      ${avatarHtml(c.title, c.avatarColor, c.avatar || '')}
       <div class="conv-main">
         <div class="conv-top">
           <div class="conv-title">${escapeHtml(c.title)}</div>
@@ -333,6 +545,10 @@ function renderConversations() {
   box.querySelectorAll('.conv-item').forEach((el) => {
     el.addEventListener('click', () => openChat(el.dataset.type, el.dataset.target, el.querySelector('.conv-title').textContent));
   });
+
+  // 汇总未读数 → 标题角标
+  state.unreadTotal = list.reduce((s, c) => s + (c.unread || 0), 0);
+  updateTitleBadge();
 }
 
 /* ==================== 渲染：好友 ==================== */
@@ -343,7 +559,7 @@ function renderFriends() {
 
   $('requestList').innerHTML = state.requests.map((r) => `
     <div class="row-item">
-      <div class="avatar" style="background:${escapeHtml(r.peer.avatarColor || '#2b6de8')}">${escapeHtml(initial(r.peer.nickname))}</div>
+      ${avatarHtml(r.peer.nickname, r.peer.avatarColor, r.peer.avatar)}
       <div class="row-main">
         <div class="row-name">${escapeHtml(r.peer.nickname)}<span class="tag tag-gray">@${escapeHtml(r.peer.username)}</span></div>
         <div class="row-sub">申请添加你为好友</div>
@@ -357,7 +573,7 @@ function renderFriends() {
 
   $('friendList').innerHTML = state.friends.map((f) => `
     <div class="row-item">
-      <div class="avatar" style="background:${escapeHtml(f.peer.avatarColor || '#2b6de8')}">${escapeHtml(initial(f.peer.nickname))}</div>
+      ${avatarHtml(f.peer.nickname, f.peer.avatarColor, f.peer.avatar)}
       <div class="row-main">
         <div class="row-name">${escapeHtml(f.peer.nickname)}<span class="tag tag-gray">@${escapeHtml(f.peer.username)}</span></div>
         <div class="row-sub">点击开始聊天</div>
@@ -370,7 +586,7 @@ function renderFriends() {
 
   $('sentList').innerHTML = state.sent.length ? state.sent.map((f) => `
     <div class="row-item">
-      <div class="avatar" style="background:${escapeHtml(f.peer.avatarColor || '#2b6de8')}">${escapeHtml(initial(f.peer.nickname))}</div>
+      ${avatarHtml(f.peer.nickname, f.peer.avatarColor, f.peer.avatar)}
       <div class="row-main">
         <div class="row-name">${escapeHtml(f.peer.nickname)}<span class="tag tag-gray">@${escapeHtml(f.peer.username)}</span></div>
         <div class="row-sub">等待对方通过</div>
@@ -425,7 +641,7 @@ function renderGroups() {
 
   $('myGroupList').innerHTML = state.groups.length ? state.groups.map((g) => `
     <div class="row-item">
-      <div class="avatar" style="background:${escapeHtml(g.avatarColor || '#2b6de8')}">${escapeHtml(initial(g.name))}</div>
+      ${avatarHtml(g.name, g.avatarColor, g.avatar)}
       <div class="row-main">
         <div class="row-name">${escapeHtml(g.name)}${g.isOwner ? '<span class="tag tag-blue">群主</span>' : ''}</div>
         <div class="row-sub">${g.memberCount} 人${g.description ? ' · ' + escapeHtml(g.description) : ''}</div>
@@ -433,13 +649,14 @@ function renderGroups() {
       <div class="row-actions">
         <button class="btn btn-sm btn-primary" data-group-chat="${escapeHtml(g.id)}">进入</button>
         <button class="btn btn-sm" data-members="${escapeHtml(g.id)}">成员</button>
+        ${g.isOwner ? `<button class="btn btn-sm btn-danger" data-del-group="${escapeHtml(g.id)}">解散</button>` : ''}
       </div>
     </div>
   `).join('') : '<div class="row-sub" style="padding:6px 2px;">暂无群聊</div>';
 
   $('joinableGroupList').innerHTML = state.joinable.length ? state.joinable.map((g) => `
     <div class="row-item">
-      <div class="avatar" style="background:${escapeHtml(g.avatarColor || '#2b6de8')}">${escapeHtml(initial(g.name))}</div>
+      ${avatarHtml(g.name, g.avatarColor, g.avatar)}
       <div class="row-main">
         <div class="row-name">${escapeHtml(g.name)}</div>
         <div class="row-sub">${g.memberCount} 人</div>
@@ -457,6 +674,8 @@ function renderGroups() {
     }));
   $('myGroupList').querySelectorAll('[data-members]').forEach((b) =>
     b.addEventListener('click', () => showMembers(b.dataset.members)));
+  $('myGroupList').querySelectorAll('[data-del-group]').forEach((b) =>
+    b.addEventListener('click', () => confirmDeleteGroup(b.dataset.delGroup)));
   $('joinableGroupList').querySelectorAll('[data-join]').forEach((b) =>
     b.addEventListener('click', async () => {
       try {
@@ -532,7 +751,7 @@ function showMembers(groupId) {
     title: g.name + ' · 群成员 (' + g.memberCount + ')',
     bodyHtml: `<div>${g.members.map((m) => `
       <div class="row-item" style="margin-bottom:6px;">
-        <div class="avatar" style="width:32px;height:32px;font-size:13px;background:${escapeHtml(m.avatarColor || '#2b6de8')}">${escapeHtml(initial(m.nickname))}</div>
+        ${avatarHtml(m.nickname, m.avatarColor, m.avatar, 'avatar-sm')}
         <div class="row-main">
           <div class="row-name">${escapeHtml(m.nickname)}${m.isOwner ? '<span class="tag tag-blue">群主</span>' : ''}</div>
           <div class="row-sub">@${escapeHtml(m.username)}</div>
@@ -541,6 +760,35 @@ function showMembers(groupId) {
     okText: '关闭',
     hideCancel: true,
     onOk: () => true
+  });
+}
+
+/** 群主解散群聊 */
+function confirmDeleteGroup(groupId) {
+  const g = state.groups.find((x) => x.id === groupId);
+  if (!g) return;
+  if (!g.isOwner) return toast('只有群主才能解散该群聊', 'error');
+  openModal({
+    title: '解散群聊',
+    bodyHtml: `<div>确定要解散群聊 <b>${escapeHtml(g.name)}</b> 吗？<br />解散后群成员将全部退出，群内聊天记录也会一并清除，且无法恢复。</div>`,
+    okText: '确认解散',
+    onOk: async () => {
+      try {
+        await api('/api/groups/' + groupId, { method: 'DELETE' });
+        toast('群聊已解散', 'success');
+        // 若正在该群聊天中，退回会话列表
+        if (state.current && state.current.type === 'group' && state.current.targetId === groupId) {
+          state.current = null;
+          showPage('conversationsPage', '微聊');
+        }
+        refreshGroups();
+        refreshConversations();
+        return true;
+      } catch (e) {
+        toast(e.message, 'error');
+        return false;
+      }
+    }
   });
 }
 
@@ -576,12 +824,30 @@ function renderMessages() {
   box.innerHTML = state.messages.map((m) => {
     const mine = m.from === me;
     const isEmoji = m.type === 'emoji';
+    const isImage = m.type === 'image';
+    const isSticker = m.type === 'sticker';
+
+    let bubbleInner = '';
+    let bubbleCls = 'msg-bubble';
+    if (isImage) {
+      bubbleCls += ' msg-image';
+      bubbleInner = `<img src="${escapeHtml(absUrl(m.content))}" alt="图片" loading="lazy" />`;
+    } else if (isSticker) {
+      bubbleCls += ' msg-sticker';
+      bubbleInner = `<img src="${escapeHtml(absUrl(m.content))}" alt="表情包" loading="lazy" />`;
+    } else {
+      bubbleInner = escapeHtml(m.content);
+    }
+    if (isEmoji) bubbleCls += ' emoji-msg';
+
+    const avatar = avatarHtml(m.fromName, avatarColorOf(m.from), avatarUrlOf(m.from), 'msg-avatar');
+
     return `
       <div class="msg-row ${mine ? 'mine' : ''}">
-        <div class="msg-avatar" style="background:${escapeHtml(avatarColorOf(m.from))}">${escapeHtml(initial(m.fromName))}</div>
+        ${avatar}
         <div class="msg-col">
           ${!mine ? `<div class="msg-sender">${escapeHtml(m.fromName)}</div>` : ''}
-          <div class="msg-bubble ${isEmoji ? 'emoji-msg' : ''}">${escapeHtml(m.content)}</div>
+          <div class="${bubbleCls}">${bubbleInner}</div>
           <div class="msg-time">${formatTime(m.createdAt)}</div>
         </div>
       </div>`;
@@ -601,15 +867,32 @@ function avatarColorOf(userId) {
   return '#8f959e';
 }
 
-async function sendMessage() {
+/** 取某人的头像图片地址 */
+function avatarUrlOf(userId) {
+  if (userId === state.user.id) return state.user.avatar || '';
+  const f = state.friends.find((x) => x.peer.id === userId);
+  if (f) return f.peer.avatar || '';
+  const g = state.groups.find((x) => x.members.some((m) => m.id === userId));
+  if (g) {
+    const m = g.members.find((x) => x.id === userId);
+    if (m) return m.avatar || '';
+  }
+  return '';
+}
+
+/** 发送一条消息（走 WebSocket，低延迟） */
+async function sendMessage({ content, type = 'text' } = {}) {
   const input = $('msgInput');
-  const text = input.value.trim();
+  const text = String(content == null ? input.value : content).trim();
   if (!text) return;
   if (!state.current) return;
 
-  const isEmoji = EMOJIS.includes(text) && text.length <= 4;
-  input.value = '';
-  input.style.height = 'auto';
+  const isEmoji = type === 'text' && EMOJIS.includes(text) && text.length <= 4;
+  const msgType = type === 'text' ? (isEmoji ? 'emoji' : 'text') : type;
+  if (type === 'text') {
+    input.value = '';
+    input.style.height = 'auto';
+  }
 
   try {
     if (state.ws && state.ws.readyState === 1) {
@@ -618,12 +901,12 @@ async function sendMessage() {
         toType: state.current.type,
         toId: state.current.targetId,
         content: text,
-        type: isEmoji ? 'emoji' : 'text'
+        type: msgType
       }));
     } else {
       const res = await api('/api/messages', {
         method: 'POST',
-        body: { toType: state.current.type, toId: state.current.targetId, content: text, type: isEmoji ? 'emoji' : 'text' }
+        body: { toType: state.current.type, toId: state.current.targetId, content: text, type: msgType }
       });
       if (res.message) {
         state.messages.push(res.message);
@@ -632,11 +915,11 @@ async function sendMessage() {
     }
   } catch (e) {
     toast(e.message, 'error');
-    input.value = text;
+    if (type === 'text') input.value = text;
   }
 }
 
-$('sendBtn').addEventListener('click', sendMessage);
+$('sendBtn').addEventListener('click', () => sendMessage());
 $('msgInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -648,7 +931,7 @@ $('msgInput').addEventListener('input', (e) => {
   e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
 });
 
-/* ==================== 表情面板 ==================== */
+/* ==================== 表情 / 斗图面板 ==================== */
 function initEmoji() {
   $('emojiGrid').innerHTML = EMOJIS.map((e) =>
     `<button class="emoji-item" data-emoji="${escapeHtml(e)}">${e}</button>`).join('');
@@ -662,8 +945,200 @@ function initEmoji() {
 }
 initEmoji();
 
+/** 渲染内置斗图 */
+function renderBuiltInStickers() {
+  const box = $('stickerGrid');
+  if (!state.builtInStickers.length) {
+    box.innerHTML = '<div class="row-sub" style="padding:10px 2px;">暂无内置表情包</div>';
+    return;
+  }
+  box.innerHTML = state.builtInStickers.map((s) => `
+    <button class="sticker-item" data-sticker="${escapeHtml(s.url)}" title="${escapeHtml(s.name)}">
+      <img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.name)}" loading="lazy" />
+    </button>
+  `).join('');
+  box.querySelectorAll('[data-sticker]').forEach((b) => {
+    b.addEventListener('click', () => {
+      sendMessage({ content: b.dataset.sticker, type: 'sticker' });
+      $('emojiPanel').classList.add('hidden');
+    });
+  });
+}
+
+/** 渲染我的自定义表情包 */
+function renderMyStickers() {
+  const grids = [$('stickerMineGrid'), $('stickerMineGrid2')].filter(Boolean);
+  const count = state.stickers.length;
+  const cnt = $('stickerCount');
+  if (cnt) cnt.textContent = count;
+
+  grids.forEach((box) => {
+    if (!box) return;
+    if (!count) {
+      box.innerHTML = '<div class="row-sub" style="padding:10px 2px;">还没有上传表情包</div>';
+      return;
+    }
+    box.innerHTML = state.stickers.map((s) => `
+      <button class="sticker-item" data-mine-sticker="${escapeHtml(s.url)}" data-id="${escapeHtml(s.id)}" title="${escapeHtml(s.name || '表情包')}">
+        <img src="${escapeHtml(absUrl(s.url))}" alt="" loading="lazy" />
+        <span class="sticker-del" data-del-sticker="${escapeHtml(s.id)}">×</span>
+      </button>
+    `).join('');
+
+    box.querySelectorAll('[data-mine-sticker]').forEach((b) => {
+      b.addEventListener('click', (e) => {
+        if (e.target.dataset.delSticker) return; // 点删除按钮不发送
+        sendMessage({ content: b.dataset.mineSticker, type: 'sticker' });
+        $('emojiPanel').classList.add('hidden');
+      });
+    });
+    box.querySelectorAll('[data-del-sticker]').forEach((b) => {
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = b.dataset.delSticker;
+        try {
+          await api('/api/stickers/' + id, { method: 'DELETE' });
+          toast('已删除表情包', 'success');
+          loadStickers();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    });
+  });
+}
+
+/** 加载我的表情包 */
+async function loadStickers() {
+  try {
+    const res = await api('/api/stickers');
+    state.stickers = res.stickers || [];
+    renderMyStickers();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+/** 加载内置斗图清单 */
+async function loadBuiltInStickers() {
+  try {
+    const res = await fetch('stickers/manifest.json');
+    const list = await res.json();
+    state.builtInStickers = Array.isArray(list) ? list : [];
+    renderBuiltInStickers();
+  } catch (e) {
+    console.error('[sticker] 内置表情包加载失败', e);
+  }
+}
+
+/** 表情面板标签切换 */
+function switchEmojiTab(tab) {
+  state.emojiTab = tab;
+  document.querySelectorAll('.emoji-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.emojiTab === tab);
+  });
+  $('emojiGrid').classList.toggle('hidden', tab !== 'emoji');
+  $('stickerGrid').classList.toggle('hidden', tab !== 'sticker');
+  $('stickerMineGrid2').classList.toggle('hidden', tab !== 'mine');
+  $('emojiUploadRow').classList.toggle('hidden', tab !== 'mine');
+}
+
+document.querySelectorAll('.emoji-tab').forEach((b) => {
+  b.addEventListener('click', () => switchEmojiTab(b.dataset.emojiTab));
+});
+
 $('emojiBtn').addEventListener('click', () => {
   $('emojiPanel').classList.toggle('hidden');
+});
+
+/* ---------------- 图片选择与上传 ---------------- */
+
+/** 读取文件为 dataURL（自动压缩到 1024px 以内） */
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) {
+      reject(new Error('请选择图片文件'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('图片读取失败'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('图片解析失败'));
+      img.onload = () => {
+        // 超过 1024px 则等比缩小，避免上传过大
+        const MAX = 1024;
+        if (img.width <= MAX && img.height <= MAX) {
+          resolve(reader.result);
+          return;
+        }
+        const scale = MAX / Math.max(img.width, img.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 上传图片到服务器，返回 URL */
+async function uploadImage(file, prefix) {
+  const dataUrl = await readImageFile(file);
+  const res = await api('/api/upload', { method: 'POST', body: { dataUrl, prefix } });
+  return res.url;
+}
+
+/** 发送图片消息 */
+$('imageInput').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!state.current) return toast('请先进入聊天', 'error');
+  try {
+    toast('图片上传中...');
+    const url = await uploadImage(file, 'img');
+    await sendMessage({ content: url, type: 'image' });
+    toast('图片已发送', 'success');
+  } catch (err) {
+    toast(err.message || '图片发送失败', 'error');
+  }
+});
+
+$('imageBtn').addEventListener('click', () => $('imageInput').click());
+
+/** 添加自定义表情包 */
+async function handleStickerFile(file) {
+  if (!file) return;
+  try {
+    toast('表情包上传中...');
+    const url = await uploadImage(file, 'sticker');
+    await api('/api/stickers', { method: 'POST', body: { url, name: file.name.replace(/\.[^.]+$/, '') } });
+    toast('表情包已添加', 'success');
+    await loadStickers();
+    switchEmojiTab('mine');
+  } catch (err) {
+    toast(err.message || '表情包添加失败', 'error');
+  }
+}
+
+[$('stickerInput'), $('stickerInput2')].filter(Boolean).forEach((inp) => {
+  inp.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    handleStickerFile(file);
+  });
+});
+
+[$('addStickerBtn'), $('addStickerBtn2')].filter(Boolean).forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const inp = btn.id === 'addStickerBtn' ? $('stickerInput') : $('stickerInput2');
+    inp.click();
+  });
 });
 
 /* ==================== 模态框 ==================== */
@@ -798,6 +1273,9 @@ function handleWS(msg) {
         renderMessages();
         api('/api/messages/read', { method: 'POST', body: { conversationId: m.conversationId } }).catch(() => {});
       }
+    } else {
+      // 不在当前会话 → 提醒（声音 + 桌面通知）
+      notifyNewMessage(m);
     }
     refreshConversations();
     return;
@@ -805,6 +1283,7 @@ function handleWS(msg) {
 
   if (action === 'friend_request') {
     toast(`${msg.data.from.nickname} 请求添加你为好友`);
+    playNotificationSound();
     refreshFriends();
     return;
   }
@@ -825,6 +1304,28 @@ function handleWS(msg) {
     return;
   }
 
+  if (action === 'group_deleted') {
+    toast(`群聊「${msg.data.groupName}」已被群主解散`, 'error');
+    if (state.current && state.current.type === 'group' && state.current.targetId === msg.data.groupId) {
+      state.current = null;
+      showPage('conversationsPage', '微聊');
+    }
+    refreshGroups();
+    refreshConversations();
+    return;
+  }
+
+  if (action === 'profile_updated') {
+    // 某人的资料变了：如果是我本人，同步本地状态
+    if (state.user && msg.user.id === state.user.id) {
+      state.user = { ...state.user, ...msg.user };
+      renderMyAvatar();
+    }
+    refreshFriends();
+    refreshGroups();
+    return;
+  }
+
   if (action === 'online_update') {
     $('onlinePill').innerHTML = '● <b>' + msg.online + '</b> 在线';
     return;
@@ -841,6 +1342,33 @@ function handleWS(msg) {
   }
 }
 
+/** 新消息提醒：提示音 + 桌面通知 */
+function notifyNewMessage(m) {
+  const me = state.user ? state.user.id : '';
+  if (m.from === me) return;   // 自己发的消息不提醒
+
+  const isGroup = m.toType === 'group';
+  let title = '';
+  let body = '';
+
+  if (isGroup) {
+    const g = state.groups.find((x) => x.id === m.toId);
+    title = (g ? g.name : '群聊') + ' · ' + (m.fromName || '新消息');
+    body = m.type === 'image' ? '[图片]' : m.type === 'sticker' ? '[表情包]' : (m.content || '');
+  } else {
+    title = m.fromName || '新消息';
+    body = m.type === 'image' ? '[图片]' : m.type === 'sticker' ? '[表情包]' : (m.content || '');
+  }
+
+  playNotificationSound();
+  showDesktopNotification(title, body);
+
+  // 页面在前台时也弹一个轻提示
+  if (document.visibilityState === 'visible' && document.hasFocus()) {
+    toast(`${title}：${body.length > 20 ? body.slice(0, 20) + '…' : body}`);
+  }
+}
+
 /* ==================== 启动 ==================== */
 async function boot() {
   if (!state.token) { booting = false; return; }
@@ -850,6 +1378,8 @@ async function boot() {
     showMain();
     connectWS();
     refreshAll();
+    loadStickers();
+    loadBuiltInStickers();
   } catch {
     // 只有在页面启动时确实没有有效登录态才回到登录页；
     // 避免与注册/登录并发时把刚建立的会话踢掉

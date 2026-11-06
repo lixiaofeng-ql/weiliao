@@ -90,9 +90,12 @@
           </div>
         </div>
         <div class="menu-list">
+          <button class="menu-item" id="profileBtn"><span class="mi-icon">👤</span>个人资料</button>
           <button class="menu-item" data-panel="friendsPanel"><span class="mi-icon">👥</span>我的好友</button>
           <button class="menu-item" data-panel="groupsPanel"><span class="mi-icon">💬</span>我的群聊</button>
           <button class="menu-item admin-only hidden" data-panel="adminPanel"><span class="mi-icon">📊</span>管理后台</button>
+          <div class="menu-divider"></div>
+          <a class="menu-item menu-link" id="shengjingLink" href="https://lixiaofeng-ql.github.io/shengjing/" target="_blank" rel="noopener"><span class="mi-icon">🚀</span>神经科学</a>
           <button class="menu-item" id="logoutBtn"><span class="mi-icon">🚪</span>退出登录</button>
         </div>
       </aside>
@@ -157,13 +160,84 @@
         <div class="chat-body" id="chatBody"></div>
 
         <div class="emoji-panel hidden" id="emojiPanel">
+          <div class="emoji-tabs">
+            <button class="emoji-tab active" data-emoji-tab="emoji">表情</button>
+            <button class="emoji-tab" data-emoji-tab="sticker">斗图</button>
+            <button class="emoji-tab" data-emoji-tab="mine">我的包</button>
+          </div>
           <div class="emoji-grid" id="emojiGrid"></div>
+          <div class="sticker-grid hidden" id="stickerGrid"></div>
+          <div class="sticker-grid hidden" id="stickerMineGrid2"></div>
+          <div class="emoji-upload-row hidden" id="emojiUploadRow">
+            <button class="btn btn-sm" id="addStickerBtn2">上传表情包</button>
+            <input type="file" id="stickerInput2" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+          </div>
         </div>
 
         <div class="chat-input-bar">
           <button class="icon-btn emoji-btn" id="emojiBtn" title="表情">😊</button>
+          <button class="icon-btn emoji-btn" id="imageBtn" title="发送图片">🖼️</button>
+          <input type="file" id="imageInput" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
           <textarea id="msgInput" rows="1" placeholder="输入消息…" ></textarea>
           <button class="btn btn-primary btn-sm" id="sendBtn">发送</button>
+        </div>
+      </section>
+
+      <!-- 页面：个人资料 -->
+      <section class="page page-panel hidden" id="profilePanel">
+        <div class="panel-inner">
+          <div class="profile-card">
+            <div class="profile-avatar-wrap">
+              <div class="avatar avatar-xl" id="profileAvatar">我</div>
+              <button class="avatar-edit" id="avatarEditBtn" title="更换头像">📷</button>
+              <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+            </div>
+            <div class="profile-fields">
+              <label class="field">
+                <span class="field-label">昵称</span>
+                <input type="text" id="profileNickname" maxlength="20" placeholder="修改昵称" />
+              </label>
+              <div class="field">
+                <span class="field-label">头像底色（无头像图片时生效）</span>
+                <div class="color-row" id="colorRow"></div>
+              </div>
+              <button class="btn btn-primary btn-block" id="saveProfileBtn">保存资料</button>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">我的表情包 <span class="badge" id="stickerCount">0</span></div>
+            <div class="action-row">
+              <button class="btn btn-primary btn-sm" id="addStickerBtn">添加表情包</button>
+              <input type="file" id="stickerInput" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+            </div>
+            <div class="sticker-mine-grid" id="stickerMineGrid"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">消息提醒</div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">提示音</div>
+                <div class="setting-sub">收到新消息时播放提示音</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="soundToggle" checked /><span class="switch-slider"></span></label>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">桌面通知</div>
+                <div class="setting-sub">页面在后台时弹出系统通知</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="notifyToggle" /><span class="switch-slider"></span></label>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">标题未读角标</div>
+                <div class="setting-sub">在浏览器标签上显示未读消息数</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="badgeToggle" checked /><span class="switch-slider"></span></label>
+            </div>
+          </div>
         </div>
       </section>
 
