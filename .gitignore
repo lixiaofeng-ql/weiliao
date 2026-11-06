@@ -9,3 +9,5 @@ build/
 
 # 本地临时脚本
 *.ps1
+*.txt
+.tools/

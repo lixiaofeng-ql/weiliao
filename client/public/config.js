@@ -7,12 +7,12 @@
  * 例：
  *   window.WL_CONFIG = {
  *     apiBase: 'https://your-backend.com',
- *     wsBase: 'wss://your-backend.com/ws'
+ *     wsBase: 'wwss://your-backend.com/ws'
  *   };
  */
 window.WL_CONFIG = {
   // 后端接口根地址，留空 = 同源
-  apiBase: '',
+  apiBase: 'https://evident-perfectly-verde-prague.trycloudflare.com',
   // WebSocket 地址，留空 = 根据 apiBase 自动推导，或回退到当前站点
-  wsBase: ''
+  wsBase: 'wss://evident-perfectly-verde-prague.trycloudflare.com/ws'
 };
