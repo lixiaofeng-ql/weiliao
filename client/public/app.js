@@ -5,8 +5,13 @@
  * - 单页视图切换
  * ============================================================ */
 
-const API = '';           // 与后端同源；如分离部署改为 http://host:3000
-const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+// 后端地址：优先 config.js 中的配置，否则同源
+const CFG = window.WL_CONFIG || {};
+const API = (CFG.apiBase || '').replace(/\/$/, '');
+const WS_URL = CFG.wsBase
+  || (API
+        ? (API.startsWith('https') ? 'wss://' : 'ws://') + API.replace(/^https?:\/\//, '') + '/ws'
+        : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
 
 const EMOJIS = [
   '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩',
