@@ -6,3 +6,6 @@ server/data/*.tmp
 .env
 dist/
 build/
+
+# 本地临时脚本
+*.ps1
