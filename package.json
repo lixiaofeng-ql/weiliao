@@ -1,0 +1,18 @@
+{
+  "name": "weiliao",
+  "version": "1.0.0",
+  "private": true,
+  "description": "微聊 - 轻量即时通讯系统（注册登录 / 好友 / 单聊 / 群聊 / 表情 / 管理员后台）",
+  "scripts": {
+    "install:server": "npm install --prefix server",
+    "start": "npm start --prefix server",
+    "dev": "npm run dev --prefix server",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "keywords": [
+    "chat",
+    "wechat-like",
+    "websocket"
+  ],
+  "license": "MIT"
+}
