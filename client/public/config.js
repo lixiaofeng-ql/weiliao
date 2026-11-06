@@ -6,7 +6,7 @@
  */
 window.WL_CONFIG = {
   // 后端接口根地址
-  apiBase: 'https://maker-resolved-whose-scenes.trycloudflare.com',
+  apiBase: 'https://innovation-pittsburgh-arbitrary-monitoring.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://maker-resolved-whose-scenes.trycloudflare.com/ws'
+  wsBase: 'wss://innovation-pittsburgh-arbitrary-monitoring.trycloudflare.com/ws'
 };
