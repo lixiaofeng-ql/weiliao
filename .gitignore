@@ -10,3 +10,4 @@ build/
 # 本地临时脚本
 *.txt
 .tools/
+*.log.err
