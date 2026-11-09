@@ -3,6 +3,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $tools = Join-Path $root '.tools'
 $cf = Join-Path $tools 'cloudflared.exe'
 $cfg = Join-Path $root 'client\public\config.js'
+$tunnelLog = Join-Path $root '.tunnel.log'
 $tunnelErr = Join-Path $root '.tunnel.err.log'
 $serverLog = Join-Path $root '.server.log'
 

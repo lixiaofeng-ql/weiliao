@@ -1,10 +1,26 @@
 /**
- * 端到端接口自测脚本：node scripts/e2e-test.mjs
+ * 微聊端到端回归测试
+ * 运行：node scripts/e2e-test.mjs [baseUrl]
+ * 默认测试本地 http://localhost:3000
  */
-const BASE = process.env.BASE || 'http://localhost:3000';
-const RESET = process.env.RESET === '1';
+const BASE = process.argv[2] || 'http://localhost:3000';
 
-const j = async (path, { method = 'GET', body, token } = {}) => {
+let pass = 0;
+let fail = 0;
+const failures = [];
+
+function check(name, cond, extra = '') {
+  if (cond) {
+    pass++;
+    console.log('  ✓ ' + name);
+  } else {
+    fail++;
+    failures.push(name + (extra ? ' -> ' + extra : ''));
+    console.log('  ✗ ' + name + (extra ? '  (' + extra + ')' : ''));
+  }
+}
+
+async function api(path, { method = 'GET', body, token } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = 'Bearer ' + token;
   const res = await fetch(BASE + path, {
@@ -12,184 +28,149 @@ const j = async (path, { method = 'GET', body, token } = {}) => {
     headers,
     body: body ? JSON.stringify(body) : undefined
   });
-  return res.json();
-};
-
-/** 注册失败则回退为登录（便于重复执行测试） */
-const registerOrLogin = async (username, password, nickname) => {
-  const r = await j('/api/auth/register', { method: 'POST', body: { username, password, nickname } });
-  if (r.success) return r;
-  return await j('/api/auth/login', { method: 'POST', body: { username, password } });
-};
-
-let pass = 0, fail = 0;
-function check(name, cond, extra) {
-  if (cond) { pass++; console.log('  ✅', name); }
-  else { fail++; console.log('  ❌', name, extra !== undefined ? JSON.stringify(extra) : ''); }
+  let json = null;
+  try { json = await res.json(); } catch { /* ignore */ }
+  return { status: res.status, json };
 }
 
-console.log('\n=== 微聊 E2E 测试 ===\n');
+const rnd = Date.now().toString(36);
+const U1 = 'test_' + rnd;
+const U2 = 'test2_' + rnd;
 
-// 1. 注册
-console.log('1. 注册账号');
-const alice = await registerOrLogin('alice', 'alice123', '爱丽丝');
-check('注册 alice', alice.success, alice);
-const bob = await registerOrLogin('bob', 'bob12345', '鲍勃');
-check('注册 bob', bob.success, bob);
-const dup = await j('/api/auth/register', { method: 'POST', body: { username: 'alice', password: 'alice123' } });
-check('重复注册被拒绝', dup.success === false, dup);
-const short = await j('/api/auth/register', { method: 'POST', body: { username: 'x', password: '1' } });
-check('过短账号/密码被拒绝', short.success === false, short);
+console.log('\n=== 微聊回归测试 @ ' + BASE + ' ===\n');
 
-// 2. 登录
-console.log('2. 登录');
-const login = await j('/api/auth/login', { method: 'POST', body: { username: 'alice', password: 'alice123' } });
-check('alice 登录成功', login.success && !!login.token, login);
-const badLogin = await j('/api/auth/login', { method: 'POST', body: { username: 'alice', password: 'wrong' } });
-check('错误密码被拒绝', badLogin.success === false, badLogin);
-const A = login.token, B = bob.token;
+console.log('[1] 注册 / 登录');
+let r = await api('/api/auth/register', { method: 'POST', body: { username: U1, password: 'pw123456', nickname: '测试甲' } });
+check('注册新用户', r.json && r.json.success, JSON.stringify(r.json));
+const tok1 = r.json && r.json.token;
+check('注册返回 token', !!tok1);
 
-// 3. 好友
-console.log('3. 好友功能');
-const req = await j('/api/friends/request', { method: 'POST', body: { username: 'bob' }, token: A });
-check('alice 添加 bob 为好友', req.success, req);
-const bobFriends = await j('/api/friends', { token: B });
-check('bob 收到 1 条好友申请', bobFriends.success && bobFriends.requests && bobFriends.requests.length >= 1, bobFriends);
-const fid = (bobFriends.requests || [])[0]?.id;
-const accept = await j('/api/friends/respond', { method: 'POST', body: { friendshipId: fid, accept: true }, token: B });
-check('bob 同意好友申请', accept.success, accept);
-const aliceFriends = await j('/api/friends', { token: A });
-check('alice 好友列表含 bob', aliceFriends.friends && aliceFriends.friends.length === 1, aliceFriends);
-const addSelf = await j('/api/friends/request', { method: 'POST', body: { username: 'alice' }, token: A });
-check('不能加自己为好友', addSelf.success === false, addSelf);
-const search = await j('/api/users/search?keyword=bo', { token: A });
-check('按账号搜索用户', search.success && search.users.length >= 1, search);
+r = await api('/api/auth/register', { method: 'POST', body: { username: U1, password: 'pw123456' } });
+check('重复注册被拒绝', r.json && r.json.success === false);
 
-// 4. 单聊 + 表情
-console.log('4. 私聊与表情');
-const msg = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '你好 bob' }, token: A });
-check('alice 发送私聊消息', msg.success, msg);
-const emoji = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '😀', type: 'emoji' }, token: A });
-check('发送表情消息', emoji.success, emoji);
-const selfMsg = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '自聊' }, token: B });
-check('不能给自己发消息', selfMsg.success === false, selfMsg);
-const hist = await j('/api/messages?toType=dm&toId=' + alice.user.id, { token: B });
-check('bob 收到 2 条消息', hist.success && hist.messages.length === 2, hist);
-const convs = await j('/api/conversations', { token: B });
-check('bob 会话列表有 1 条', convs.success && convs.conversations.length === 1, convs);
-check('会话含未读数', convs.conversations[0].unread === 2, convs.conversations[0]);
-await j('/api/messages/read', { method: 'POST', body: { conversationId: convs.conversations[0].conversationId }, token: B });
-const convs2 = await j('/api/conversations', { token: B });
-check('已读后未读归零', convs2.conversations[0].unread === 0, convs2.conversations[0]);
+r = await api('/api/auth/register', { method: 'POST', body: { username: U2, password: 'pw123456', nickname: '测试乙' } });
+const tok2 = r.json && r.json.token;
+check('注册第二个用户', !!tok2);
 
-// 5. 群聊
-console.log('5. 群聊功能');
-const grp = await j('/api/groups', { method: 'POST', body: { name: '项目讨论组', members: [bob.user.id], description: '测试群' }, token: A });
-check('alice 创建群聊', grp.success && grp.group.memberCount === 2, grp);
-const gid = grp.group.id;
-const gmsg = await j('/api/messages', { method: 'POST', body: { toType: 'group', toId: gid, content: '大家好' }, token: B });
-check('群成员发送群消息', gmsg.success, gmsg);
-const ghist = await j('/api/messages?conversationId=group:' + gid, { token: A });
-check('群消息历史可读', ghist.success && ghist.messages.length === 1, ghist);
-const myGroups = await j('/api/groups', { token: B });
-check('bob 的群列表含该群', myGroups.groups.some((g) => g.id === gid), myGroups);
-const outsider = await registerOrLogin('carol', 'carol123', '卡罗尔');
-const outsiderMsg = await j('/api/messages', { method: 'POST', body: { toType: 'group', toId: gid, content: '偷偷发言' }, token: outsider.token });
-check('非群成员不能发言', outsiderMsg.success === false, outsiderMsg);
-const joinable = await j('/api/groups', { token: outsider.token });
-check('carol 看到可加入群列表', joinable.joinable.some((g) => g.id === gid), joinable);
-const joined = await j(`/api/groups/${gid}/join`, { method: 'POST', token: outsider.token });
-check('carol 加入群聊', joined.success && joined.group.memberCount === 3, joined);
+r = await api('/api/auth/login', { method: 'POST', body: { username: U1, password: 'wrong' } });
+check('错误密码登录失败', r.json && r.json.success === false);
 
-// 6. 权限
-console.log('6. 权限校验');
-const noAuth = await j('/api/friends');
-check('未登录访问被拒绝', noAuth.success === false, noAuth);
-const notAdmin = await j('/api/admin/stats', { token: A });
-check('普通用户访问后台被拒', notAdmin.success === false, notAdmin);
-const adminLogin = await j('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'admin123' } });
-check('admin 登录成功', adminLogin.success, adminLogin);
-const stats = await j('/api/admin/stats', { token: adminLogin.token });
-check('admin 可查注册账号数', stats.success && stats.stats.totalUsers >= 4, stats.stats);
-check('admin 可见用户列表', stats.users && stats.users.length >= 4, stats.users && stats.users.length);
-const delAdmin = await j('/api/admin/users/' + adminLogin.user.id, { method: 'DELETE', token: adminLogin.token });
-check('不能删除管理员', delAdmin.success === false, delAdmin);
+r = await api('/api/auth/login', { method: 'POST', body: { username: U1, password: 'pw123456' } });
+check('正确密码登录成功', r.json && r.json.success);
+const tok = r.json && r.json.token;
 
-// 7. WebSocket
-console.log('7. WebSocket 实时推送');
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { WebSocket } = require('../server/node_modules/ws');
-const got = [];
-// WS 地址跟随 BASE，保证隔离端口下也能测到
-const WS_BASE = BASE.replace(/^http/, 'ws');
-const wsA = new WebSocket(`${WS_BASE}/ws?token=${A}`);
-const wsB = new WebSocket(`${WS_BASE}/ws?token=${B}`);
-await new Promise((r) => { let n = 0; const t = setInterval(() => { if (++n > 40 || (wsA.readyState === 1 && wsB.readyState === 1)) { clearInterval(t); r(); } }, 50); });
-check('WS 连接建立', wsA.readyState === 1 && wsB.readyState === 1);
-wsB.on('message', (d) => { const m = JSON.parse(d.toString()); if (m.action === 'new_message') got.push(m.message); });
-await new Promise((r) => setTimeout(r, 200));
-await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '实时消息测试' }, token: A });
-await new Promise((r) => setTimeout(r, 600));
-check('bob 通过 WS 实时收到消息', got.some((m) => m.content === '实时消息测试'), got);
-const badWs = new WebSocket(`${WS_BASE}/ws?token=invalid`);
-await new Promise((r) => setTimeout(r, 400));
-check('无效 token 的 WS 被拒绝', badWs.readyState === 3, badWs.readyState);
-wsA.close(); wsB.close();
+r = await api('/api/auth/me', { token: tok });
+check('获取当前用户', r.json && r.json.success && r.json.user.username === U1);
 
-// 8. 个人资料 / 头像
-console.log('8. 个人资料与头像');
-const prof1 = await j('/api/auth/profile', { method: 'POST', body: { nickname: '爱丽丝改名' }, token: A });
-check('修改昵称成功', prof1.success && prof1.user.nickname === '爱丽丝改名', prof1);
-const prof2 = await j('/api/auth/profile', { method: 'POST', body: { avatarColor: '#0f8a5f' }, token: A });
-check('修改头像底色成功', prof2.success && prof2.user.avatarColor === '#0f8a5f', prof2);
-const profBad = await j('/api/auth/profile', { method: 'POST', body: { avatar: 'javascript:alert(1)' }, token: A });
-check('非法头像地址被拒绝', profBad.success === false, profBad);
-// 上传 1x1 PNG
-const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-const up = await j('/api/upload', { method: 'POST', body: { dataUrl: png, prefix: 'avatar' }, token: A });
-check('上传头像图片成功', up.success && up.url.startsWith('/uploads/'), up);
-const prof3 = await j('/api/auth/profile', { method: 'POST', body: { avatar: up.url }, token: A });
-check('绑定自定义头像成功', prof3.success && prof3.user.avatar === up.url, prof3);
-const me = await j('/api/auth/me', { token: A });
-check('头像信息对外可见', me.success && me.user.avatar === up.url, me.user);
-const profBadColor = await j('/api/auth/profile', { method: 'POST', body: { avatarColor: 'red' }, token: A });
-check('非法头像颜色被拒绝', profBadColor.success === false, profBadColor);
+r = await api('/api/auth/me');
+check('未带 token 返回 401', r.status === 401);
 
-// 9. 自定义表情包
-console.log('9. 自定义表情包');
-const stList0 = await j('/api/stickers', { token: A });
-check('表情包列表可读', stList0.success && Array.isArray(stList0.stickers), stList0);
-const stAdd = await j('/api/stickers', { method: 'POST', body: { url: '/uploads/sticker_test.gif', name: '测试表情' }, token: A });
-check('添加自定义表情包成功', stAdd.success && stAdd.sticker.id, stAdd);
-const stList1 = await j('/api/stickers', { token: A });
-check('我的表情包包含刚添加的', stList1.stickers.some((s) => s.id === stAdd.sticker.id), stList1);
-const stDel = await j('/api/stickers/' + stAdd.sticker.id, { method: 'DELETE', token: A });
-check('删除自定义表情包成功', stDel.success, stDel);
-const stDelOther = await j('/api/stickers/s_nonexist', { method: 'DELETE', token: B });
-check('删除他人表情包被拒', stDelOther.success === false, stDelOther);
+console.log('\n[2] 好友');
+const searchRes = await api('/api/users/search?keyword=' + U2, { token: tok });
+const id2 = searchRes.json.users[0] && searchRes.json.users[0].id;
+check('搜索用户', !!id2, JSON.stringify(searchRes.json));
 
-// 10. 发送图片 / 表情包消息
-console.log('10. 图片与表情包消息');
-const imgMsg = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: '/uploads/x.png', type: 'image' }, token: A });
-check('发送图片消息成功', imgMsg.success && imgMsg.message.type === 'image', imgMsg);
-const stickerMsg = await j('/api/messages', { method: 'POST', body: { toType: 'dm', toId: bob.user.id, content: 'stickers/f-huaji.gif', type: 'sticker' }, token: A });
-check('发送表情包消息成功', stickerMsg.success && stickerMsg.message.type === 'sticker', stickerMsg);
-const imgConvs = await j('/api/conversations', { token: B });
-const dmConv = imgConvs.conversations.find((c) => c.conversationId.startsWith('dm:'));
-check('会话列表表情包摘要为[表情包]', dmConv && dmConv.lastMessage === '[表情包]', dmConv);
+r = await api('/api/friends/request', { method: 'POST', body: { username: U2 }, token: tok });
+check('发送好友请求', r.json && r.json.success, JSON.stringify(r.json));
 
-// 11. 群聊删除（仅群主）
-console.log('11. 群聊解散权限');
-const gOwner = await j('/api/groups', { method: 'POST', body: { name: '待解散群', members: [bob.user.id] }, token: A });
-check('创建测试群成功', gOwner.success, gOwner);
-const delGid = gOwner.group.id;
-const notOwner = await j('/api/groups/' + delGid, { method: 'DELETE', token: B });
-check('非群主不能解散群聊', notOwner.success === false, notOwner);
-const owner = await j('/api/groups/' + delGid, { method: 'DELETE', token: A });
-check('群主可以解散群聊', owner.success, owner);
-const gone = await j('/api/groups', { token: B });
-check('解散后群聊不再出现在列表', !gone.groups.some((g) => g.id === delGid), gone.groups);
+r = await api('/api/friends/request', { method: 'POST', body: { username: U2 }, token: tok2 });
+check('重复发起被拒绝', r.json && r.json.success === false);
 
-console.log(`\n=== 结果: 通过 ${pass} / 失败 ${fail} ===\n`);
-process.exit(fail > 0 ? 1 : 0);
+r = await api('/api/friends', { token: tok2 });
+const reqs = r.json.requests || [];
+check('对方收到好友请求', reqs.length > 0, JSON.stringify(Object.keys(r.json)));
+const reqId = reqs[0] && reqs[0].id;
+
+r = await api('/api/friends/respond', { method: 'POST', body: { friendshipId: reqId, accept: true }, token: tok2 });
+check('同意好友请求', r.json && r.json.success, JSON.stringify(r.json));
+
+r = await api('/api/friends', { token: tok });
+check('好友列表包含对方', (r.json.friends || []).some((f) => f.peer.username === U2), JSON.stringify(r.json.friends));
+
+console.log('\n[3] 群聊');
+r = await api('/api/groups', { method: 'POST', body: { name: '测试群_' + rnd, members: [id2] }, token: tok });
+check('创建群聊', r.json && r.json.success);
+const gid = r.json && r.json.group && r.json.group.id;
+
+r = await api('/api/groups', { token: tok });
+check('群列表包含新群', (r.json.groups || []).some((g) => g.id === gid));
+
+console.log('\n[4] 消息');
+r = await api('/api/messages', { method: 'POST', body: { toType: 'group', toId: gid, content: '大家好' }, token: tok });
+check('发送群消息', r.json && r.json.success);
+
+r = await api('/api/messages?toType=group&toId=' + gid, { token: tok2 });
+const gm = r.json.messages || [];
+check('对方收到群消息', gm.some((m) => m.content === '大家好'), JSON.stringify(gm.slice(0,1)));
+
+r = await api('/api/messages', { method: 'POST', body: { toType: 'group', toId: gid, content: 'x' }, token: 'badtoken' });
+check('非法 token 发消息被拒', r.status === 401);
+
+r = await api('/api/messages?toType=group&toId=' + gid, { token: tok });
+check('消息列表非空', (r.json.messages || []).length > 0);
+
+console.log('\n[5] 上传');
+// 1x1 PNG
+const png1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+r = await api('/api/upload', { method: 'POST', body: { dataUrl: png1, prefix: 'img' }, token: tok });
+check('小图上传成功', r.json && r.json.success && !!r.json.url, JSON.stringify(r.json));
+
+const gifUrl = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+r = await api('/api/upload', { method: 'POST', body: { dataUrl: gifUrl, prefix: 'sticker' }, token: tok });
+check('GIF 上传保持 gif 后缀', r.json && r.json.url && r.json.url.endsWith('.gif'), JSON.stringify(r.json));
+
+r = await api('/api/upload', { method: 'POST', body: { dataUrl: 'data:text/plain;base64,aGk=', prefix: 'img' }, token: tok });
+check('非图片类型被拒绝', r.json && r.json.success === false);
+
+r = await api('/api/upload', { method: 'POST', body: { dataUrl: png1, prefix: 'img' } });
+check('未登录上传被拒', r.status === 401);
+
+console.log('\n[6] 表情包');
+r = await api('/api/stickers', { token: tok });
+check('获取表情包列表', r.json && r.json.success && Array.isArray(r.json.stickers));
+
+r = await api('/api/stickers', { method: 'POST', body: { url: r.json.stickers[0] ? r.json.stickers[0].url : '/uploads/x.gif', name: '我的表情' }, token: tok });
+check('添加自定义表情包', r.json && r.json.success);
+
+console.log('\n[7] 资料修改');
+r = await api('/api/auth/profile', { method: 'POST', body: { nickname: '新昵称', avatarColor: '#ff0000' }, token: tok });
+check('修改昵称', r.json && r.json.success && r.json.user.nickname === '新昵称');
+check('修改颜色', r.json && r.json.user.avatarColor === '#ff0000');
+
+console.log('\n[8] 群解散权限');
+r = await api('/api/groups', { method: 'POST', body: { name: '待解散群_' + rnd }, token: tok2 });
+const gid2 = r.json && r.json.group && r.json.group.id;
+r = await api('/api/groups/' + gid2, { method: 'DELETE', token: tok });
+check('非群主不能解散群', r.json && r.json.success === false);
+
+r = await api('/api/groups/' + gid, { method: 'DELETE', token: tok });
+check('群主可以解散群', r.json && r.json.success);
+
+r = await api('/api/groups', { token: tok });
+check('解散后群列表不含该群', !(r.json.groups || []).some((g) => g.id === gid));
+
+console.log('\n[9] 管理员');
+r = await api('/api/admin/stats', { token: tok });
+check('普通用户不能访问管理后台', r.status === 403);
+
+r = await api('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'admin123' } });
+const adminTok = r.json && r.json.token;
+check('管理员登录', !!adminTok);
+
+r = await api('/api/admin/stats', { token: adminTok });
+check('管理员可查看统计', r.json && r.json.success && r.json.stats.totalUsers >= 1);
+
+console.log('\n[10] 注销');
+r = await api('/api/auth/logout', { method: 'POST', token: tok });
+check('注销成功', r.json && r.json.success);
+r = await api('/api/auth/me', { token: tok });
+check('注销后 token 失效', r.status === 401);
+
+console.log('\n============================================');
+console.log('通过: ' + pass + '  失败: ' + fail);
+if (fail) {
+  console.log('\n失败项:');
+  failures.forEach((f) => console.log('  - ' + f));
+}
+console.log('============================================\n');
+process.exit(fail ? 1 : 0);

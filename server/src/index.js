@@ -52,7 +52,8 @@ if (!findUserByUsername(ADMIN_USER)) {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+// JSON 体积上限：需容纳 base64 图片（3MB 二进制 -> 约 4MB base64）
+app.use(express.json({ limit: '5mb' }));
 
 /** 简易访问日志 */
 app.use((req, res, next) => {

@@ -6,12 +6,49 @@
  * ============================================================ */
 
 // 后端地址：优先 config.js 中的配置，否则同源
+// 注意：API / WS_URL 使用 let，因为启动时还会异步刷新一次（绕过 Pages CDN 缓存）
 const CFG = window.WL_CONFIG || {};
-const API = (CFG.apiBase || '').replace(/\/$/, '');
-const WS_URL = CFG.wsBase
+let API = (CFG.apiBase || '').replace(/\/$/, '');
+let WS_URL = CFG.wsBase
   || (API
         ? (API.startsWith('https') ? 'wss://' : 'ws://') + API.replace(/^https?:\/\//, '') + '/ws'
         : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+
+/** 根据 apiBase 推导 ws 地址 */
+function deriveWsUrl(base) {
+  if (!base) {
+    return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+  }
+  return (base.startsWith('https') ? 'wss://' : 'ws://') + base.replace(/^https?:\/\//, '') + '/ws';
+}
+
+/**
+ * 运行时重新拉取 config.js。
+ * 背景：GitHub Pages CDN 对 config.js 缓存 600 秒，隧道换地址后
+ * 直接 <script> 加载会拿到旧地址。这里用带时间戳的 URL 强制回源。
+ * @returns {Promise<boolean>} 地址是否发生变化
+ */
+async function refreshRemoteConfig() {
+  try {
+    const url = 'config.js?t=' + Date.now();
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return false;
+    const text = await res.text();
+    // 解析出 apiBase
+    const m = text.match(/apiBase\s*:\s*['"]([^'"]+)['"]/);
+    if (!m || !m[1]) return false;
+    const newApi = m[1].replace(/\/$/, '');
+    if (!newApi || newApi === API) return false;
+
+    console.log('[config] 后端地址变更:', API, '->', newApi);
+    API = newApi;
+    WS_URL = deriveWsUrl(API);
+    return true;
+  } catch (e) {
+    console.warn('[config] 刷新配置失败', e);
+    return false;
+  }
+}
 
 const EMOJIS = [
   '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩',
@@ -192,14 +229,26 @@ function absUrl(u) {
 /* ==================== API ==================== */
 let booting = true;   // 启动阶段不因 401 强制跳回登录页
 
+/** 判断是否为「服务不可达」类错误（而非业务错误） */
+function isNetworkError(err) {
+  if (!err) return false;
+  const msg = String(err.message || '');
+  return /Failed to fetch|NetworkError|服务器无响应|load failed|无法连接/i.test(msg);
+}
+
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-  const res = await fetch(API + path, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined
-  });
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch (e) {
+    throw new Error('无法连接服务器，请检查网络或稍后重试');
+  }
   let json = null;
   try { json = await res.json(); } catch { /* ignore */ }
   if (res.status === 401) {
@@ -1053,32 +1102,51 @@ $('emojiBtn').addEventListener('click', () => {
 
 /* ---------------- 图片选择与上传 ---------------- */
 
-/** 读取文件为 dataURL（自动压缩到 1024px 以内） */
+/** 单张图片最大二进制体积（与服务端 MAX_BYTES 保持一致） */
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+
+/**
+ * 上传目标体积。
+ * Cloudflare 免费隧道上行速度很慢（实测 ~34KB/s），
+ * 因此客户端把普通图片压到 400KB 以内，保证 10 秒内传完。
+ */
+const TARGET_UPLOAD_BYTES = 400 * 1024;
+
+/**
+ * 读取文件为 dataURL。
+ * - GIF 保持原始格式，避免斗图动画被压成静态图
+ * - 其他格式按目标体积压缩（先缩尺寸，再降质量）
+ */
 function readImageFile(file) {
   return new Promise((resolve, reject) => {
     if (!file || !file.type.startsWith('image/')) {
       reject(new Error('请选择图片文件'));
       return;
     }
+    // GIF 直接原样上传，保留动画
+    if (file.type === 'image/gif') {
+      if (file.size > MAX_IMAGE_BYTES) {
+        reject(new Error('表情包过大，请选择 3MB 以内的图片'));
+        return;
+      }
+      const gifReader = new FileReader();
+      gifReader.onerror = () => reject(new Error('图片读取失败'));
+      gifReader.onload = () => resolve(gifReader.result);
+      gifReader.readAsDataURL(file);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('图片读取失败'));
     reader.onload = () => {
       const img = new Image();
       img.onerror = () => reject(new Error('图片解析失败'));
       img.onload = () => {
-        // 超过 1024px 则等比缩小，避免上传过大
-        const MAX = 1024;
-        if (img.width <= MAX && img.height <= MAX) {
-          resolve(reader.result);
-          return;
+        try {
+          resolve(compressImage(img));
+        } catch (e) {
+          reject(new Error('图片压缩失败，请换一张试试'));
         }
-        const scale = MAX / Math.max(img.width, img.height);
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
       };
       img.src = reader.result;
     };
@@ -1086,9 +1154,55 @@ function readImageFile(file) {
   });
 }
 
+/**
+ * 把已解码的图片压缩到目标体积以内。
+ * 策略：先限制最长边 1280px，再逐级降质量直到满足体积要求。
+ */
+function compressImage(img) {
+  const MAX_DIM = 1280;
+  let w = img.width;
+  let h = img.height;
+  if (w > MAX_DIM || h > MAX_DIM) {
+    const scale = MAX_DIM / Math.max(w, h);
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+
+  // 逐步降低质量
+  for (const q of [0.82, 0.72, 0.62, 0.5, 0.4, 0.3]) {
+    const url = canvas.toDataURL('image/jpeg', q);
+    // base64 长度约等于二进制体积 * 1.37
+    if (url.length <= TARGET_UPLOAD_BYTES * 1.37) return url;
+  }
+
+  // 仍然过大：进一步缩小尺寸再试
+  const scale2 = 0.7;
+  canvas.width = Math.round(w * scale2);
+  canvas.height = Math.round(h * scale2);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  for (const q of [0.7, 0.55, 0.4, 0.3]) {
+    const url = canvas.toDataURL('image/jpeg', q);
+    if (url.length <= TARGET_UPLOAD_BYTES * 1.37) return url;
+  }
+  return canvas.toDataURL('image/jpeg', 0.3);
+}
+
 /** 上传图片到服务器，返回 URL */
 async function uploadImage(file, prefix) {
   const dataUrl = await readImageFile(file);
+  const kb = Math.round(dataUrl.length / 1024);
+  // 隧道上行较慢，超过 600KB 时给出预期耗时提示
+  if (kb > 600) {
+    toast(`图片 ${kb}KB，上传中（约需 ${Math.ceil(kb / 40)} 秒）...`);
+  } else {
+    toast('图片上传中...');
+  }
   const res = await api('/api/upload', { method: 'POST', body: { dataUrl, prefix } });
   return res.url;
 }
@@ -1250,8 +1364,11 @@ function connectWS() {
       state.ws = null;
       // 掉线重连（指数退避，最多 30s）
       const delay = Math.min(1000 * Math.pow(1.6, state.wsRetry++), 30000);
-      setTimeout(() => {
-        if (state.token) connectWS();
+      setTimeout(async () => {
+        if (!state.token) return;
+        // 重连前刷新一次配置，兼容隧道换址后 WS 仍指向旧地址
+        await refreshRemoteConfig();
+        connectWS();
       }, delay);
     };
 
@@ -1373,17 +1490,31 @@ function notifyNewMessage(m) {
 async function boot() {
   if (!state.token) { booting = false; return; }
   try {
-    const res = await api('/api/auth/me');
+    // 先尝试用当前地址，若失败则刷新一次配置（应对隧道换址）
+    let res = null;
+    try {
+      res = await api('/api/auth/me');
+    } catch (e) {
+      if (await refreshRemoteConfig()) {
+        res = await api('/api/auth/me');
+      } else {
+        throw e;
+      }
+    }
     state.user = res.user;
     showMain();
     connectWS();
     refreshAll();
     loadStickers();
     loadBuiltInStickers();
-  } catch {
+  } catch (err) {
+    console.error('[boot] 启动失败', err);
     // 只有在页面启动时确实没有有效登录态才回到登录页；
     // 避免与注册/登录并发时把刚建立的会话踢掉
     if (!state.user) {
+      if (isNetworkError(err)) {
+        toast('后端服务暂时无法连接，请稍后重试', 'error');
+      }
       logout(true);
     }
   } finally {

@@ -10,3 +10,13 @@ build/
 *.txt
 .tools/
 *.log.err
+
+# 启动脚本产生的日志 / 临时文件
+.start.out
+.start.err
+.run2.log
+.server.err.log
+.tunnel.log
+.tunnel.err.log
+test-payload.json
+tmp-*.js
