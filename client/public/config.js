@@ -6,7 +6,7 @@
  */
 window.WL_CONFIG = {
   // 后端接口根地址
-  apiBase: 'https://muslim-revised-tea-naples.trycloudflare.com',
+  apiBase: 'https://api.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://muslim-revised-tea-naples.trycloudflare.com/ws'
+  wsBase: 'wss://api.trycloudflare.com/ws'
 };
