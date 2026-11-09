@@ -77,6 +77,28 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ============ 公开接口 ============
+
+/** 健康检查（无需登录，供前端探活） */
+app.get('/api/health', (req, res) => {
+  res.json({ success: true, ok: true, time: Date.now() });
+});
+
+/**
+ * 地址发现接口。
+ * 前端拿到 Pages 上的旧地址连不上时，可以调用它获取最新的可用地址。
+ * 后端在启动脚本里把自己的公网地址写入 WL_PUBLIC_URL，
+ * 同时后端会把最新隧道地址写进自身可访问的位置。
+ */
+app.get('/api/discover', (req, res) => {
+  res.json({
+    success: true,
+    apiBase: process.env.WL_PUBLIC_URL || '',
+    wsBase: process.env.WL_PUBLIC_WS || '',
+    time: Date.now()
+  });
+});
+
 // ============ 认证接口 ============
 
 app.post('/api/auth/register', (req, res) => {
