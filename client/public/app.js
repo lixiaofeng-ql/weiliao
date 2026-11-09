@@ -247,7 +247,21 @@ async function api(path, { method = 'GET', body } = {}) {
       body: body ? JSON.stringify(body) : undefined
     });
   } catch (e) {
-    throw new Error('无法连接服务器，请检查网络或稍后重试');
+    // 隧道地址可能已变更：刷新一次远程配置后重试
+    console.warn('[api] 连接失败，尝试刷新配置后重试', path);
+    if (await refreshRemoteConfig()) {
+      try {
+        res = await fetch(API + path, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined
+        });
+      } catch (e2) {
+        throw new Error('无法连接服务器，请检查网络或稍后重试');
+      }
+    } else {
+      throw new Error('无法连接服务器，请检查网络或稍后重试');
+    }
   }
   let json = null;
   try { json = await res.json(); } catch { /* ignore */ }

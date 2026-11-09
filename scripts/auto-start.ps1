@@ -56,7 +56,7 @@ for ($attempt = 1; $attempt -le 3 -and -not $url; $attempt++) {
     Remove-Item $tunnelErr -ErrorAction SilentlyContinue
   }
 
-  Start-Process -FilePath $cf -ArgumentList 'tunnel', '--url', 'http://localhost:3000', '--no-autoupdate' `
+  Start-Process -FilePath $cf -ArgumentList 'tunnel', '--url', 'http://localhost:3000', '--no-autoupdate', '--protocol', 'http2' `
     -WorkingDirectory $root -RedirectStandardOutput "$tunnelLog.out" -RedirectStandardError $tunnelErr -WindowStyle Hidden
 
   for ($i = 0; $i -lt 45; $i++) {
@@ -111,3 +111,21 @@ try {
 }
 
 Log "完成。本地 http://localhost:3000  |  公网 $url"
+
+# ---------- 6. 拉起看门狗 ----------
+# 看门狗每 2 分钟检查一次「后端 + 隧道」健康度，
+# 一旦隧道被 Cloudflare 回收或断线，自动重开隧道并更新 config.js。
+$watchdog = Join-Path $PSScriptRoot 'watchdog.ps1'
+if (Test-Path $watchdog) {
+  # 避免重复启动
+  $running = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'watchdog\.ps1' -and $_.ProcessId -ne $PID }
+  if (-not $running) {
+    Start-Process -FilePath 'powershell.exe' `
+      -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $watchdog `
+      -WorkingDirectory $root -WindowStyle Hidden
+    Log '看门狗已启动 (每 2 分钟自检)'
+  } else {
+    Log '看门狗已在运行'
+  }
+}
