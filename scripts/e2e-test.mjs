@@ -1,9 +1,22 @@
 /**
  * 微聊端到端回归测试
  * 运行：node scripts/e2e-test.mjs [baseUrl]
- * 默认测试本地 http://localhost:3000
+ *   baseUrl 可用命令行参数或 BASE 环境变量指定
+ *   默认测试本地 http://localhost:3000
+ *
+ * 注意：直接对生产服务运行本测试会污染生产数据库，
+ *       请使用 scripts/e2e-clean.mjs（隔离环境运行）。
  */
-const BASE = process.argv[2] || 'http://localhost:3000';
+const BASE = process.argv[2] || process.env.BASE || 'http://localhost:3000';
+
+// 保险：直接对生产服务跑测试会污染生产数据库，这里显式警告
+if (BASE.includes('localhost:3000') || BASE.includes('127.0.0.1:3000')) {
+  console.warn(
+    '\n⚠ 警告：正在对默认端口 3000 运行测试。\n' +
+    '  如果这是生产服务，测试数据会写入生产数据库。\n' +
+    '  隔离运行请用：node scripts/e2e-clean.mjs\n'
+  );
+}
 
 let pass = 0;
 let fail = 0;
