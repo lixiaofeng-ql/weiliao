@@ -1305,9 +1305,51 @@ async function refreshAdmin() {
         <td>${u.messageCount}</td>
         <td>${formatDateTime(u.createdAt)}</td>
         <td>${formatDateTime(u.lastLoginAt)}</td>
-        <td>${u.isAdmin ? '<span class="row-sub">—</span>' : `<button class="btn btn-sm btn-danger" data-del="${escapeHtml(u.id)}" data-name="${escapeHtml(u.username)}">删除</button>`}</td>
+        <td>${u.isAdmin
+          ? '<span class="row-sub">—</span>'
+          : `<button class="btn btn-sm" data-pwd="${escapeHtml(u.id)}" data-name="${escapeHtml(u.username)}">重置密码</button>
+             <button class="btn btn-sm btn-danger" data-del="${escapeHtml(u.id)}" data-name="${escapeHtml(u.username)}">删除</button>`}</td>
       </tr>
     `).join('');
+
+    // 重置密码
+    $('adminUserTable').querySelectorAll('[data-pwd]').forEach((b) => {
+      b.addEventListener('click', () => {
+        openModal({
+          title: '重置密码',
+          bodyHtml: `
+            <div class="field">
+              <span class="field-label">账号</span>
+              <input type="text" value="${escapeHtml(b.dataset.name)}" disabled />
+            </div>
+            <div class="field">
+              <span class="field-label">新密码（至少 6 位）</span>
+              <input type="text" id="resetPwdInput" placeholder="请输入新密码" autocomplete="off" />
+            </div>
+            <div class="row-sub" style="margin-top:6px">重置后该用户需用新密码重新登录</div>
+          `,
+          okText: '重置',
+          onOk: async () => {
+            const pwd = ($('resetPwdInput') || {}).value || '';
+            if (pwd.length < 6) {
+              toast('新密码至少 6 个字符', 'error');
+              return false;
+            }
+            try {
+              await api('/api/admin/users/' + b.dataset.pwd + '/password', {
+                method: 'POST',
+                body: { password: pwd }
+              });
+              toast('密码已重置', 'success');
+              return true;
+            } catch (e) {
+              toast(e.message, 'error');
+              return false;
+            }
+          }
+        });
+      });
+    });
 
     $('adminUserTable').querySelectorAll('[data-del]').forEach((b) => {
       b.addEventListener('click', () => {

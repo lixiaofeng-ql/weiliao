@@ -16,7 +16,10 @@ build/
 .start.err
 .run2.log
 .server.err.log
+.server.log.err
 .tunnel.log
+.tunnel.log.out
 .tunnel.err.log
 test-payload.json
 tmp-*.js
+*.tmp

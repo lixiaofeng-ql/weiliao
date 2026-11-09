@@ -4,7 +4,7 @@
  * - 登录态使用随机 token，服务端保存（重启后仍有效）
  */
 import crypto from 'node:crypto';
-import { db, save, nextId } from './db.js';
+import { db, save, saveNow, nextId } from './db.js';
 
 export function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
@@ -84,7 +84,8 @@ export function createUser({ username, password, nickname, isAdmin = false }) {
   user.passwordSalt = salt;
   user.passwordHash = hash;
   db().users.push(user);
-  save();
+  // 关键数据：立即落盘，避免进程异常导致注册丢失
+  saveNow();
   return user;
 }
 

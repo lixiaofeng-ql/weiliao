@@ -15,6 +15,18 @@ Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
 Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
+# ---------- 1. 启动前先备份数据库 ----------
+# 保证任何异常操作前都有一份可回滚的快照
+try {
+  $backupScript = Join-Path $PSScriptRoot 'backup-db.ps1'
+  if (Test-Path $backupScript) {
+    & $backupScript -Keep 20 | Out-Null
+    Log '数据库已备份'
+  }
+} catch {
+  Log "备份失败（不阻塞启动）: $($_.Exception.Message)"
+}
+
 # ---------- 2. 启动后端 ----------
 if (-not (Test-Path (Join-Path $root 'server\node_modules'))) {
   Log '安装后端依赖...'
@@ -33,16 +45,37 @@ if (-not (Test-Path $cf)) {
   Invoke-WebRequest -Uri $m -OutFile $cf -UseBasicParsing -TimeoutSec 120
 }
 Remove-Item $tunnelErr -ErrorAction SilentlyContinue
-Start-Process -FilePath $cf -ArgumentList 'tunnel', '--url', 'http://localhost:3000', '--no-autoupdate' `
-  -WorkingDirectory $root -RedirectStandardOutput "$tunnelLog.out" -RedirectStandardError $tunnelErr -WindowStyle Hidden
 
+# 隧道最多尝试 3 次（网络波动 / DNS 故障时自动重试）
 $url = $null
-for ($i = 0; $i -lt 45; $i++) {
-  Start-Sleep -Seconds 2
-  $raw = Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue
-  if ($raw -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $url = $Matches[0]; break }
+for ($attempt = 1; $attempt -le 3 -and -not $url; $attempt++) {
+  if ($attempt -gt 1) {
+    Log "隧道启动失败，$attempt 秒后重试（第 $attempt 次）..."
+    Start-Sleep -Seconds $attempt
+    Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Remove-Item $tunnelErr -ErrorAction SilentlyContinue
+  }
+
+  Start-Process -FilePath $cf -ArgumentList 'tunnel', '--url', 'http://localhost:3000', '--no-autoupdate' `
+    -WorkingDirectory $root -RedirectStandardOutput "$tunnelLog.out" -RedirectStandardError $tunnelErr -WindowStyle Hidden
+
+  for ($i = 0; $i -lt 45; $i++) {
+    Start-Sleep -Seconds 2
+    $raw = Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue
+    # 只匹配真正分配到的子域名，且排除 api.trycloudflare.com 这类服务端域名
+    # cloudflared 输出的格式： |  https://xxx-yyy-zzz.trycloudflare.com  |
+    if ($raw -match 'https://(?!api\.)[a-z0-9][a-z0-9-]{2,}\.trycloudflare\.com') {
+      $url = $Matches[0]
+      break
+    }
+  }
 }
-if (-not $url) { Log '隧道启动失败'; exit 1 }
+if (-not $url) {
+  Log '隧道启动失败（已重试 3 次，仍未获取到公网地址）'
+  Log "错误详情见 $tunnelErr"
+  # 保留原有 config.js，不要写入无效地址
+  exit 1
+}
 Log "公网地址: $url"
 
 # ---------- 4. 回写 config ----------

@@ -69,9 +69,13 @@ $url = $null
 for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep -Seconds 2
   $raw = (Get-Content $tunnelErr -Raw -ErrorAction SilentlyContinue)
-  if ($raw -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $url = $Matches[0]; break }
+  # 只匹配真正分配到的子域名，排除 api.trycloudflare.com 这类服务端域名
+  if ($raw -match 'https://(?!api\.)[a-z0-9][a-z0-9-]{2,}\.trycloudflare\.com') {
+    $url = $Matches[0]
+    break
+  }
 }
-if (-not $url) { throw '隧道启动失败，请查看 .tunnel.err.log' }
+if (-not $url) { throw "隧道启动失败，请查看 $tunnelErr" }
 Write-Step "公网地址: $url" -ForegroundColor Green
 
 # ---------- 5. 回写 config.js ----------

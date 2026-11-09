@@ -1,7 +1,7 @@
 /**
  * 业务逻辑：好友关系、群组、消息、已读状态。
  */
-import { db, save, nextId } from './db.js';
+import { db, save, saveNow, nextId } from './db.js';
 import { publicUser, randomColor } from './auth.js';
 
 // ============ 好友 ============
@@ -51,7 +51,7 @@ export function requestFriend(fromUserId, targetName) {
   friendship.status = 'pending';
   friendship.updatedAt = Date.now();
   if (!existing) db().friendships.push(friendship);
-  save();
+  saveNow();
   return { friendship: serializeFriendship(friendship, fromUserId), target: publicUser(target) };
 }
 
@@ -61,7 +61,7 @@ export function respondFriend(userId, friendshipId, accept) {
   if (f.to !== userId) return { error: '无权操作' };
   f.status = accept ? 'accepted' : 'rejected';
   f.updatedAt = Date.now();
-  save();
+  saveNow();
   return { friendship: serializeFriendship(f, userId) };
 }
 
@@ -121,7 +121,7 @@ export function createGroup(ownerId, { name, members = [], description = '' }) {
     avatarColor: randomColor()
   };
   db().groups.push(group);
-  save();
+  saveNow();
   return { group: serializeGroup(group, ownerId) };
 }
 
@@ -155,7 +155,7 @@ export function deleteGroup(userId, groupId) {
   db().groups = db().groups.filter((x) => x.id !== groupId);
   // 同时清理该群的消息与已读记录
   db().messages = db().messages.filter((m) => m.conversationId !== `group:${groupId}`);
-  save();
+  saveNow();
   return { ok: true, group: serializeGroup(g, userId) };
 }
 
@@ -207,7 +207,7 @@ export function addSticker(userId, { url, name = '' }) {
     createdAt: Date.now()
   };
   db().stickers.push(sticker);
-  save();
+  saveNow();
   return { sticker };
 }
 

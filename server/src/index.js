@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
-import { load, save, persistNow, db } from './db.js';
-import { createUser, verifyPassword, createSession, destroySession, userByToken, publicUser } from './auth.js';
+import { load, save, saveNow, persistNow, db } from './db.js';
+import { createUser, verifyPassword, hashPassword, createSession, destroySession, userByToken, publicUser } from './auth.js';
 import {
   requestFriend,
   respondFriend,
@@ -159,7 +159,7 @@ app.post('/api/auth/profile', auth, (req, res) => {
     req.user.avatarColor = c;
   }
 
-  save();
+  saveNow();
   // 广播资料变更，好友/群成员界面能实时更新
   broadcastProfileChange(req.user);
   res.json({ success: true, user: publicUser(req.user) });
@@ -403,8 +403,46 @@ app.delete('/api/admin/users/:id', auth, requireAdmin, (req, res) => {
   db().groups.forEach((g) => {
     g.memberIds = g.memberIds.filter((m) => m !== id);
   });
-  save();
+  // 关键操作：立即落盘
+  saveNow();
   notifyUser(id, 'account_removed', {});
+  res.json({ success: true });
+});
+
+/**
+ * 管理员重置用户密码
+ * 密码是 scrypt 加盐散列存储、不可逆，所以密码遗忘时只能重置。
+ */
+app.post('/api/admin/users/:id/password', auth, requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const target = db().users.find((u) => u.id === id);
+  if (!target) return res.json({ success: false, message: '用户不存在' });
+  const pwd = String((req.body || {}).password || '');
+  if (pwd.length < 6) return res.json({ success: false, message: '新密码至少 6 个字符' });
+  const { salt, hash } = hashPassword(pwd);
+  target.passwordSalt = salt;
+  target.passwordHash = hash;
+  // 重置密码后使该用户所有会话失效，强制重新登录
+  db().sessions = db().sessions.filter((s) => s.userId !== id);
+  saveNow();
+  notifyUser(id, 'account_removed', {});
+  res.json({ success: true });
+});
+
+/** 管理员修改自己的密码 */
+app.post('/api/admin/password', auth, requireAdmin, (req, res) => {
+  const { oldPassword, newPassword } = req.body || {};
+  if (String(newPassword || '').length < 6) {
+    return res.json({ success: false, message: '新密码至少 6 个字符' });
+  }
+  if (!verifyPassword(oldPassword, req.user.passwordSalt, req.user.passwordHash)) {
+    return res.json({ success: false, message: '原密码不正确' });
+  }
+  const { salt, hash } = hashPassword(newPassword);
+  req.user.passwordSalt = salt;
+  req.user.passwordHash = hash;
+  db().sessions = db().sessions.filter((s) => s.userId !== req.user.id);
+  saveNow();
   res.json({ success: true });
 });
 
@@ -567,6 +605,11 @@ process.on('SIGTERM', () => {
   persistNow();
   process.exit(0);
 });
+// 进程退出（含窗口关闭 / 任务管理器结束）时确保数据落盘
+process.on('exit', () => {
+  persistNow();
+});
 process.on('uncaughtException', (e) => {
   console.error('[server] 未捕获异常', e);
+  persistNow();
 });
