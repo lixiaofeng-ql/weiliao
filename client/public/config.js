@@ -6,7 +6,7 @@
  */
 window.WL_CONFIG = {
   // 后端接口根地址
-  apiBase: 'https://crew-browser-independently-cursor.trycloudflare.com',
+  apiBase: 'https://slides-generic-optimize-comfortable.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://crew-browser-independently-cursor.trycloudflare.com/ws'
+  wsBase: 'wss://slides-generic-optimize-comfortable.trycloudflare.com/ws'
 };
