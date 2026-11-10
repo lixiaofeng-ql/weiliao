@@ -451,9 +451,16 @@ $('registerForm').addEventListener('submit', async (e) => {
    - 发送前加密，收到后解密，服务端全程只见密文
    ============================================================ */
 
-/** E2EE 是否启用（本地开关，存在 localStorage） */
+/**
+ * E2EE 是否启用（本地开关，存在 localStorage）。
+ * 默认开启（opt-out）：只有用户主动关闭才走明文。
+ * 这样绝大多数用户默认就享有端到端加密。
+ */
 function e2eeEnabled() {
-  return localStorage.getItem('wl_e2ee') === '1';
+  const v = localStorage.getItem('wl_e2ee');
+  // 没有任何记录 → 视为开启
+  if (v === null || v === undefined) return true;
+  return v === '1';
 }
 
 /** 开启 / 关闭 E2EE */
@@ -506,9 +513,16 @@ async function initE2EE(res, password) {
     window.WL_E2EE_READY = true;
     await refreshPeerKeys();
   } catch (e) {
+    // 最常见原因：管理员重置过密码 → 私钥密文解不开
     console.warn('[e2ee] 初始化失败，本次会话以明文模式运行', e);
     window.WL_E2EE_READY = false;
-    toast('端到端加密初始化失败，将以普通模式聊天', 'error');
+    const isKeyProblem = /operation failed|decrypt|OperationError/i.test(String(e && e.message));
+    toast(
+      isKeyProblem
+        ? '端到端加密解锁失败（密码可能已被重置）。为保证安全，本次会话按明文模式运行。'
+        : '端到端加密初始化失败，将以普通模式聊天',
+      'error'
+    );
   }
 }
 
@@ -566,8 +580,15 @@ async function encryptOutgoing({ content, type, fileKey, fileIv }) {
     fileKey
   });
   if (!res.ok) {
-    // 缺少对方公钥 → 明确报错，不静默降级
-    throw new Error('加密失败：' + res.reason + '（对方可能还没登录过一次以生成密钥）');
+    // 缺少对方公钥 → 降级为明文发送，但明确告知用户（绝不静默降级）
+    const who = recipients.filter((id) => id !== state.user.id).join('、');
+    toast(
+      '对方（' + (who || '该会话成员') + '）尚未生成加密密钥，本条消息以明文发送。' +
+      '请让对方登录一次以启用加密。',
+      'error'
+    );
+    console.warn('[e2ee] 加密失败，降级明文:', res.reason);
+    return { cipher: false, content, fileIv: fileIv || '' };
   }
   return { cipher: true, content: JSON.stringify(res.payload), fileIv: fileIv || '' };
 }
@@ -2517,6 +2538,61 @@ function notifyNewMessage(m) {
 }
 
 /* ==================== 启动 ==================== */
+/**
+ * 页面刷新后提示用户输入密码解锁 E2EE 私钥。
+ * 私钥用密码派生的 KEK 加密，服务端无法解开，所以必须由用户输入密码。
+ */
+function promptE2eeUnlock() {
+  if (!window.E2EE || !e2eeEnabled()) return;
+  if (window.WL_E2EE_READY) return;
+
+  openModal({
+    title: '解锁端到端加密',
+    bodyHtml: `
+      <div class="e2ee-unlock-box">
+        <p>为了解密历史消息，请输入你的登录密码解锁本机私钥。</p>
+        <p class="muted">密码只在本机使用，不会上传。服务器只保存加密后的私钥，无法读取。</p>
+        <input type="password" id="e2eeUnlockPwd" class="input" placeholder="请输入登录密码" autocomplete="current-password" />
+      </div>
+    `,
+    okText: '解锁',
+    cancelText: '暂不',
+    onOk: async () => {
+      const pwd = ($('e2eeUnlockPwd') && $('e2eeUnlockPwd').value) || '';
+      if (!pwd) { toast('请输入密码', 'error'); return false; }
+      try {
+        const cres = await api('/api/crypto/me');
+        const c = cres.crypto || {};
+        if (!c.cryptoEncPrivate) {
+          await window.E2EE.setupIdentity(api, state.user, pwd);
+        } else {
+          await window.E2EE.unlock({ ...c, username: state.user.username }, pwd);
+        }
+        const me = await api('/api/auth/me');
+        window.E2EE.cachePeerKeys([{
+          id: me.user.id,
+          cryptoPublicKey: me.user.cryptoPublicKey,
+          cryptoSigPublicKey: me.user.cryptoSigPublicKey
+        }]);
+        window.WL_E2EE_READY = true;
+        await refreshPeerKeys();
+        refreshE2eeStatus();
+        toast('端到端加密已解锁', 'success');
+        // 重新渲染当前会话以解密已有消息
+        if (state.current) {
+          const cur = state.current;
+          await openChat(cur.type, cur.targetId, cur.title);
+        }
+        return true;
+      } catch (e) {
+        toast('解锁失败：密码不正确，或管理员重置过密码', 'error');
+        return false;
+      }
+    }
+  });
+  setTimeout(() => { try { $('e2eeUnlockPwd') && $('e2eeUnlockPwd').focus(); } catch { /* ignore */ } }, 100);
+}
+
 async function boot() {
   if (!state.token) { booting = false; return; }
   try {
@@ -2537,6 +2613,8 @@ async function boot() {
     refreshAll();
     loadStickers();
     loadBuiltInStickers();
+    // 刷新页面后需要密码才能解锁私钥 → 提示用户解锁
+    promptE2eeUnlock();
   } catch (err) {
     console.error('[boot] 启动失败', err);
     // 只有在页面启动时确实没有有效登录态才回到登录页；

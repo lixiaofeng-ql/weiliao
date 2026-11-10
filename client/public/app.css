@@ -633,6 +633,9 @@ input, textarea { font-family: inherit; }
   box-shadow: 0 0 0 3px rgba(43,109,232,.12);
 }
 .modal-body textarea { resize: vertical; min-height: 68px; }
+/* 端到端加密解锁提示 */
+.e2ee-unlock-box p { margin: 0 0 10px; line-height: 1.6; }
+.e2ee-unlock-box .muted { color: var(--text-3); font-size: 13px; }
 .modal-footer {
   display: flex; gap: 9px;
   padding: 6px 20px 18px;
