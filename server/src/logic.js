@@ -229,6 +229,60 @@ export function removeSticker(userId, stickerId) {
   return { ok: true, url: s.url };
 }
 
+// ============ 聊天设置（免打扰 / 置顶 / 背景） ============
+
+/** 读取某用户在某会话的设置 */
+export function getChatSettings(userId, conversationId) {
+  const mine = db().chatSettings?.[userId] || {};
+  return {
+    muted: !!mine[conversationId]?.muted,
+    pinned: !!mine[conversationId]?.pinned,
+    background: mine[conversationId]?.background || ''
+  };
+}
+
+/**
+ * 更新聊天设置。
+ * 变更字段：muted / pinned / background
+ */
+export function updateChatSettings(userId, conversationId, patch = {}) {
+  if (!db().chatSettings) db().chatSettings = {};
+  if (!db().chatSettings[userId]) db().chatSettings[userId] = {};
+  const cur = db().chatSettings[userId][conversationId] || { muted: false, pinned: false, background: '' };
+
+  if ('muted' in patch) cur.muted = !!patch.muted;
+  if ('pinned' in patch) cur.pinned = !!patch.pinned;
+  if ('background' in patch) {
+    const bg = String(patch.background || '').slice(0, 300);
+    // 允许：站内上传图片 / 外链图片 / dataURL / CSS 渐变
+    const isImage = /^\/uploads\//.test(bg) || /^https?:\/\//i.test(bg) || /^data:image\//i.test(bg);
+    const isGradient = /^linear-gradient\(/i.test(bg) || /^radial-gradient\(/i.test(bg);
+    if (bg && !isImage && !isGradient) {
+      return { error: '背景图片地址不合法' };
+    }
+    cur.background = bg;
+  }
+  db().chatSettings[userId][conversationId] = cur;
+  saveNow();
+  return { settings: cur };
+}
+
+/** 清空某会话的聊天记录（仅清自己的副本，服务端物理删除双方消息） */
+export function clearConversation(userId, conversationId) {
+  const before = db().messages.length;
+  db().messages = db().messages.filter((m) => m.conversationId !== conversationId);
+  // 清理已读记录
+  for (const uid of Object.keys(db().reads || {})) {
+    const r = db().reads[uid];
+    if (!r) continue;
+    for (const mid of Object.keys(r)) {
+      if (db().messages.every((m) => m.id !== mid)) delete r[mid];
+    }
+  }
+  saveNow();
+  return { removed: before - db().messages.length };
+}
+
 // ============ 消息 ============
 
 /**
@@ -333,12 +387,20 @@ export function listConversations(userId) {
     const cur = convMap.get(m.conversationId);
     if (!cur || m.createdAt > cur.createdAt) convMap.set(m.conversationId, m);
   }
+  const settings = db().chatSettings?.[userId] || {};
   return [...convMap.values()]
-    .sort((x, y) => y.createdAt - x.createdAt)
+    .sort((x, y) => {
+      // 置顶会话优先排
+      const px = settings[x.conversationId]?.pinned ? 1 : 0;
+      const py = settings[y.conversationId]?.pinned ? 1 : 0;
+      if (px !== py) return py - px;
+      return y.createdAt - x.createdAt;
+    })
     .map((m) => {
       const unread = db().messages.filter(
         (x) => x.conversationId === m.conversationId && x.from !== userId && !isRead(userId, x.id)
       ).length;
+      const st = settings[m.conversationId] || {};
       if (m.conversationId.startsWith('group:')) {
         const gid = m.conversationId.slice(6);
         const g = db().groups.find((x) => x.id === gid);
@@ -350,7 +412,10 @@ export function listConversations(userId) {
           avatarColor: g ? g.avatarColor : '#8f959e',
           lastMessage: previewText(m),
           lastTime: m.createdAt,
-          unread
+          unread,
+          muted: !!st.muted,
+          pinned: !!st.pinned,
+          background: st.background || ''
         };
       }
       const peerId = m.participants.find((p) => p !== userId);
@@ -364,7 +429,10 @@ export function listConversations(userId) {
         avatar: peer ? peer.avatar || '' : '',
         lastMessage: previewText(m),
         lastTime: m.createdAt,
-        unread
+        unread,
+        muted: !!st.muted,
+        pinned: !!st.pinned,
+        background: st.background || ''
       };
     });
 }

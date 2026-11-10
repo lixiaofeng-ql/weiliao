@@ -75,6 +75,7 @@
         </div>
         <div class="topbar-right">
           <span class="online-pill" id="onlinePill" title="在线人数">● <b>0</b> 在线</span>
+          <button class="icon-btn hidden" id="chatMenuBtn" title="聊天信息">•••</button>
           <button class="icon-btn" id="menuBtn" title="菜单">☰</button>
         </div>
       </header>
@@ -241,6 +242,51 @@
         </div>
       </section>
 
+      <!-- 页面：发现 -->
+      <section class="page page-panel hidden" id="discoverPanel">
+        <div class="panel-inner">
+          <div class="section-block">
+            <div class="section-title">常用工具</div>
+            <button class="row-item" id="discoverStickers">
+              <div class="row-main">
+                <div class="row-name">表情包管理</div>
+                <div class="row-sub">查看并管理我上传的斗图</div>
+              </div>
+              <span class="row-arrow">›</span>
+            </button>
+            <button class="row-item" id="discoverGroups">
+              <div class="row-main">
+                <div class="row-name">我的群聊</div>
+                <div class="row-sub">管理群成员与群设置</div>
+              </div>
+              <span class="row-arrow">›</span>
+            </button>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">安全与隐私</div>
+            <div class="row-item">
+              <div class="row-main">
+                <div class="row-name">端到端加密</div>
+                <div class="row-sub" id="e2eeStatus">检查中…</div>
+              </div>
+              <span class="row-arrow">›</span>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-title">其他</div>
+            <a class="row-item" id="discoverShengjing" href="https://lixiaofeng-ql.github.io/shengjing/" target="_blank" rel="noopener">
+              <div class="row-main">
+                <div class="row-name">神经科学</div>
+                <div class="row-sub">打开 shengjing 系统</div>
+              </div>
+              <span class="row-arrow">›</span>
+            </a>
+          </div>
+        </div>
+      </section>
+
       <!-- 页面：管理员后台 -->
       <section class="page page-panel hidden" id="adminPanel">
         <div class="panel-inner">
@@ -294,10 +340,36 @@
           </div>
         </div>
       </section>
+      <!-- 底部标签栏（微信风格） -->
+      <nav class="tabbar" id="tabBar">
+        <button class="tab-item active" data-tab="chats">
+          <span class="tab-icon">💬</span><span class="tab-label">微信</span>
+          <span class="tab-dot hidden" id="tabUnreadDot"></span>
+        </button>
+        <button class="tab-item" data-tab="contacts">
+          <span class="tab-icon">👥</span><span class="tab-label">通讯录</span>
+        </button>
+        <button class="tab-item" data-tab="discover">
+          <span class="tab-icon">🧭</span><span class="tab-label">发现</span>
+        </button>
+        <button class="tab-item" data-tab="me">
+          <span class="tab-icon">👤</span><span class="tab-label">我</span>
+        </button>
+      </nav>
     </div>
 
     <!-- 全局提示 -->
     <div class="toast-wrap" id="toastWrap"></div>
+
+    <!-- 个人资料卡（点头像查看） -->
+    <div class="sheet-mask hidden" id="profileCardMask">
+      <div class="profile-card-sheet" id="profileCardSheet"></div>
+    </div>
+
+    <!-- 聊天信息面板（左上角三个点） -->
+    <div class="sheet-mask hidden" id="chatSheetMask">
+      <div class="chat-sheet" id="chatSheet"></div>
+    </div>
 
     <!-- 模态框 -->
     <div class="modal-mask hidden" id="modalMask">
@@ -310,6 +382,6 @@
   </div>
 
   <script src="config.js?v=1"></script>
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

@@ -29,7 +29,10 @@ import {
   dmConversationId,
   addSticker,
   listStickers,
-  removeSticker
+  removeSticker,
+  getChatSettings,
+  updateChatSettings,
+  clearConversation
 } from './logic.js';
 import { saveImage, removeUpload, ensureUploadDir, UPLOAD_DIR } from './upload.js';
 
@@ -373,6 +376,43 @@ app.post('/api/messages/read', auth, (req, res) => {
 
 app.get('/api/conversations', auth, (req, res) => {
   res.json({ success: true, conversations: listConversations(req.user.id) });
+});
+
+// ============ 聊天设置接口 ============
+
+/** 读取某会话的设置（免打扰 / 置顶 / 背景） */
+app.get('/api/chat/settings', auth, (req, res) => {
+  const { conversationId } = req.query;
+  if (!conversationId) return res.json({ success: false, message: '缺少 conversationId' });
+  res.json({ success: true, settings: getChatSettings(req.user.id, conversationId) });
+});
+
+/** 更新会话设置 */
+app.post('/api/chat/settings', auth, (req, res) => {
+  const { conversationId, muted, pinned, background } = req.body || {};
+  if (!conversationId) return res.json({ success: false, message: '缺少 conversationId' });
+  const patch = {};
+  if ('muted' in (req.body || {})) patch.muted = muted;
+  if ('pinned' in (req.body || {})) patch.pinned = pinned;
+  if ('background' in (req.body || {})) patch.background = background;
+  const result = updateChatSettings(req.user.id, conversationId, patch);
+  if (result.error) return res.json({ success: false, message: result.error });
+  res.json({ success: true, settings: result.settings });
+});
+
+/** 清空聊天记录 */
+app.post('/api/chat/clear', auth, (req, res) => {
+  const { conversationId } = req.body || {};
+  if (!conversationId) return res.json({ success: false, message: '缺少 conversationId' });
+  // 权限校验：必须是会话参与者
+  const isParticipant = db().messages.some((m) => m.conversationId === conversationId && m.participants.includes(req.user.id));
+  const inGroup = conversationId.startsWith('group:')
+    && isGroupMember(conversationId.slice(6), req.user.id);
+  if (!isParticipant && !inGroup) {
+    return res.status(403).json({ success: false, message: '无权操作该会话' });
+  }
+  const result = clearConversation(req.user.id, conversationId);
+  res.json({ success: true, removed: result.removed });
 });
 
 /** 在线人数（所有登录用户可查） */

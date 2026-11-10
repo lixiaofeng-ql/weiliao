@@ -37,6 +37,8 @@ const EMPTY = {
   reads: {},
   // 用户自定义表情包：{ id, userId, url, name, createdAt }
   stickers: [],
+  // 聊天设置（按用户维度）：{ [userId]: { [conversationId]: { muted, pinned, background } } }
+  chatSettings: {},
   seq: {}
 };
 
@@ -69,6 +71,7 @@ export function load() {
         state = Object.assign(structuredClone(EMPTY), parsed);
         state.reads = state.reads || {};
         state.seq = state.seq || {};
+        state.chatSettings = state.chatSettings || {};
         console.log('[db] 已加载', DB_FILE, '用户数:', state.users.length);
         startBackupTimer();
         return state;
@@ -131,10 +134,11 @@ function restoreFromBackup() {
   for (const f of candidates) {
     const parsed = tryReadJson(path.join(BACKUP_DIR, f));
     if (parsed) {
-      state = Object.assign(structuredClone(EMPTY), parsed);
-      state.reads = state.reads || {};
-      state.seq = state.seq || {};
-      console.log('[db] 使用备份文件:', f);
+        state = Object.assign(structuredClone(EMPTY), parsed);
+        state.reads = state.reads || {};
+        state.seq = state.seq || {};
+        state.chatSettings = state.chatSettings || {};
+        console.log('[db] 使用备份文件:', f);
       // 立刻把恢复后的数据写回主文件
       persistNow();
       return true;

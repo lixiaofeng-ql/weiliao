@@ -844,3 +844,276 @@ input, textarea { font-family: inherit; }
 @media (min-width: 768px) {
   .main { max-width: 720px; margin: 0 auto; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 }
+
+/* ============================================================
+   微信风格：底部标签栏
+   ============================================================ */
+.tabbar {
+  flex: none;
+  display: flex;
+  background: rgba(248,249,251,.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--line);
+  padding-bottom: var(--safe-bottom);
+  z-index: 30;
+}
+.tab-item {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 7px 0 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  color: var(--text-3);
+  transition: color .15s;
+}
+.tab-item .tab-icon {
+  font-size: 22px;
+  line-height: 1.15;
+  filter: grayscale(1);
+  opacity: .55;
+  transition: filter .18s, opacity .18s, transform .18s;
+}
+.tab-item .tab-label {
+  font-size: 10.5px;
+  letter-spacing: .2px;
+  font-weight: 500;
+}
+.tab-item.active { color: var(--primary); }
+.tab-item.active .tab-icon {
+  filter: none;
+  opacity: 1;
+  transform: translateY(-1px);
+}
+.tab-item:active .tab-icon { transform: scale(.9); }
+.tab-dot {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  margin-left: 6px;
+  min-width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 2px rgba(248,249,251,.94);
+}
+
+/* ============================================================
+   微信风格：底部弹层（个人资料卡 / 聊天信息）
+   ============================================================ */
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.42);
+  z-index: 140;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: fadeIn .18s ease;
+}
+.profile-card-sheet,
+.chat-sheet {
+  width: 100%;
+  max-width: 500px;
+  background: var(--card);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 40px rgba(0,0,0,.18);
+  animation: sheetUp .26s cubic-bezier(.2,.8,.3,1);
+  max-height: 88vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: var(--safe-bottom);
+}
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+
+@media (min-width: 768px) {
+  .sheet-mask { align-items: center; }
+  .profile-card-sheet, .chat-sheet { border-radius: 20px; max-height: 82vh; }
+}
+
+/* ---------- 个人资料卡 ---------- */
+.pcard {
+  padding: 26px 22px 22px;
+  text-align: center;
+}
+.pcard-avatar {
+  width: 76px; height: 76px;
+  margin: 0 auto 14px;
+  border-radius: 20px;
+  font-size: 30px;
+  font-weight: 500;
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+.pcard-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.pcard-name {
+  font-size: 19px;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+.pcard-account {
+  font-size: 13.5px;
+  color: var(--text-3);
+  margin-bottom: 18px;
+}
+.pcard-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+.pcard-tag {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-weight: 500;
+}
+.pcard-tag.tag-gray { background: #f2f3f5; color: var(--text-2); }
+.pcard-tag.tag-green { background: #e6f7ef; color: var(--green); }
+.pcard-facts {
+  text-align: left;
+  background: #f7f8fa;
+  border-radius: 14px;
+  padding: 4px 16px;
+}
+.pcard-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  font-size: 13.5px;
+  border-bottom: 1px solid #eceef1;
+}
+.pcard-fact:last-child { border-bottom: none; }
+.pcard-fact-k { color: var(--text-3); flex: none; }
+.pcard-fact-v { color: var(--text); text-align: right; word-break: break-all; }
+.pcard-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.pcard-actions .btn { flex: 1; }
+
+/* ---------- 聊天信息面板 ---------- */
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 18px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-head .avatar { width: 46px; height: 46px; border-radius: 12px; font-size: 18px; }
+.sheet-head .avatar img { width: 100%; height: 100%; object-fit: cover; }
+.sheet-head-main { flex: 1; min-width: 0; }
+.sheet-head-name {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-head-sub { font-size: 12.5px; color: var(--text-3); margin-top: 1px; }
+.sheet-close {
+  border: none;
+  background: #f2f3f5;
+  color: var(--text-2);
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  font-size: 17px;
+  line-height: 1;
+  flex: none;
+}
+.sheet-list { padding: 6px 0; }
+.sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 14px 18px;
+  font-size: 15px;
+  color: var(--text);
+  text-align: left;
+}
+.sheet-item:active { background: #f5f7fa; }
+.sheet-item .si-icon { font-size: 19px; width: 26px; text-align: center; flex: none; }
+.sheet-item .si-main { flex: 1; min-width: 0; }
+.sheet-item .si-title { font-size: 14.5px; }
+.sheet-item .si-sub { font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.sheet-item .si-arrow { color: #c9cdd4; font-size: 19px; flex: none; }
+.sheet-item.danger { color: var(--red); }
+.sheet-divider { height: 8px; background: #f2f4f7; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+
+/* 开关 */
+.switch { position: relative; display: inline-block; width: 46px; height: 27px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  background: #dcdfe6;
+  border-radius: 27px;
+  transition: background .2s;
+}
+.switch-slider:before {
+  content: "";
+  position: absolute;
+  height: 21px; width: 21px;
+  left: 3px; bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.switch input:checked + .switch-slider { background: var(--primary); }
+.switch input:checked + .switch-slider:before { transform: translateX(19px); }
+
+/* 聊天背景（可自定义壁纸） */
+.chat-body.custom-bg {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.chat-body.custom-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(247,248,250,.28);
+  pointer-events: none;
+}
+.chat-body { position: relative; }
+.chat-body > * { position: relative; z-index: 1; }
+
+/* 搜索聊天内容 */
+.search-hit {
+  background: #fff3a3;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* 会话列表：置顶 / 免打扰 标记 */
+.conv-item.is-pinned { background: #fafbfc; }
+.conv-pin, .conv-mute {
+  font-size: 11px;
+  margin-right: 3px;
+  vertical-align: 1px;
+}
+.conv-mute { opacity: .55; }
+.conv-avatar-wrap { flex: none; display: block; }
+
+/* 消息头像可点击 */
+.msg-avatar-wrap { flex: none; display: block; cursor: pointer; }
+.msg-avatar-wrap:active .avatar { transform: scale(.94); }
+.msg-avatar-wrap .avatar { transition: transform .12s; }
+
+/* 背景选择 */
+.bg-pick.is-picked { border-color: var(--primary) !important; box-shadow: 0 0 0 3px rgba(43,109,232,.16); }

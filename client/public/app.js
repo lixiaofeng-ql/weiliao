@@ -131,6 +131,14 @@ function updateTitleBadge() {
   document.title = `(${n > 99 ? '99+' : n}) ${base}`;
 }
 
+/** 底部「微信」标签的未读红点 */
+function updateTabBadge() {
+  const dot = $('tabUnreadDot');
+  if (!dot) return;
+  const n = state.unreadTotal;
+  dot.classList.toggle('hidden', n <= 0);
+}
+
 /* ---------------- 桌面通知 ---------------- */
 function requestNotifyPermission() {
   if (!('Notification' in window)) return;
@@ -214,16 +222,51 @@ function initial(name) {
 function avatarHtml(name, color, avatarUrl, cls = '') {
   const style = `background:${escapeHtml(color || '#2b6de8')}`;
   if (avatarUrl) {
-    return `<div class="avatar ${cls}" style="${style}"><img src="${escapeHtml(avatarUrl)}" alt="" loading="lazy" /></div>`;
+    // 必须走 mediaUrl：后端返回的是 /uploads/xxx 相对路径，
+    // 直接用会解析到 Pages 站点根目录导致 404（头像裂图）
+    return `<div class="avatar ${cls}" style="${style}"><img src="${escapeHtml(mediaUrl(avatarUrl))}" alt="" loading="lazy" /></div>`;
   }
   return `<div class="avatar ${cls}" style="${style}">${escapeHtml(initial(name))}</div>`;
 }
 
-/** 上传地址补全（后端返回 /uploads/xxx 相对路径） */
+/**
+ * 上传地址补全（后端返回 /uploads/xxx 相对路径）
+ * @deprecated 已被 mediaUrl 取代，保留兼容旧调用
+ */
 function absUrl(u) {
   if (!u) return '';
   if (/^https?:\/\//i.test(u) || u.startsWith('data:')) return u;
   return API + u;
+}
+
+/**
+ * 媒体资源地址补全（图片 / 表情包）。
+ * - 绝对地址、dataURL：原样返回
+ * - /uploads/xxx：用户上传的文件，走后端
+ * - stickers/xxx、icons/xxx：前端静态资源，随前端站点走
+ */
+function mediaUrl(u) {
+  if (!u) return '';
+  if (/^(https?:)?\/\//i.test(u) || u.startsWith('data:')) return u;
+  if (u.startsWith('/')) return API + u;
+  // 相对路径：优先当作前端静态资源
+  return assetUrl(u);
+}
+
+/**
+ * 前端静态资源地址补全。
+ * 表情包等资源由 GitHub Pages（或后端）提供，用相对路径会在
+ * 路径带前缀的站点（/weiliao/）下解析错位，这里统一基于当前页面目录补全。
+ */
+function assetUrl(u) {
+  if (!u) return '';
+  if (/^(https?:)?\/\//i.test(u) || u.startsWith('data:')) return u;
+  if (u.startsWith('/')) {
+    // 绝对路径：取站点根（Pages 部署在 /weiliao/ 子路径时需要回退到根再拼）
+    const root = location.pathname.replace(/\/[^/]*$/, '/');
+    return new URL(u, location.origin + root).href;
+  }
+  return new URL(u, document.baseURI).href;
 }
 
 /* ==================== API ==================== */
@@ -384,7 +427,26 @@ function openProfile() {
   $('profileNickname').value = u.nickname || '';
   renderColorRow();
   renderMyStickers();
-  showPage('profilePanel', '个人资料');
+  showPage('profilePanel', '我');
+  setActiveTab('me');
+}
+
+/** 「我」标签页刷新 */
+function refreshProfile() {
+  if (!state.user) return;
+  $('profileNickname').value = state.user.nickname || '';
+  renderColorRow();
+  renderMyStickers();
+}
+
+/** 「发现」标签页刷新 */
+function refreshDiscover() {
+  const el = $('e2eeStatus');
+  if (el) {
+    el.textContent = window.WL_E2EE_READY
+      ? '已启用，聊天内容在传输前加密，服务端无法读取明文'
+      : '未启用';
+  }
 }
 
 $('profileBtn')?.addEventListener('click', () => {
@@ -469,7 +531,7 @@ function renderMyAvatar() {
   if (!u) return;
   const color = u.avatarColor || '#2b6de8';
   const img = u.avatar
-    ? `<img src="${escapeHtml(absUrl(u.avatar))}" alt="" />`
+    ? `<img src="${escapeHtml(mediaUrl(u.avatar))}" alt="" />`
     : escapeHtml(initial(u.nickname || u.username));
   const menuAvatar = $('menuAvatar');
   menuAvatar.style.background = color;
@@ -481,23 +543,75 @@ function renderMyAvatar() {
   }
 }
 
-const PAGES = ['conversationsPage', 'friendsPanel', 'groupsPanel', 'chatPage', 'adminPanel', 'profilePanel'];
+const PAGES = ['conversationsPage', 'friendsPanel', 'groupsPanel', 'chatPage', 'adminPanel', 'profilePanel', 'discoverPanel'];
+
+/** 底部标签栏与页面的对应关系 */
+const TAB_PAGES = {
+  chats: 'conversationsPage',
+  contacts: 'friendsPanel',
+  discover: 'discoverPanel',
+  me: 'profilePanel'
+};
+const TAB_TITLES = {
+  chats: '微信',
+  contacts: '通讯录',
+  discover: '发现',
+  me: '我'
+};
+
+/** 当前激活的底部标签 */
+let activeTab = 'chats';
 
 function showPage(pageId, title) {
   PAGES.forEach((p) => $(p).classList.toggle('hidden', p !== pageId));
   $('pageTitle').textContent = title || '微聊';
   $('backBtn').classList.toggle('hidden', pageId === 'conversationsPage');
   if (pageId !== 'chatPage') $('emojiPanel').classList.add('hidden');
+  // 聊天页隐藏底部标签栏（微信进入会话后不显示标签）
+  const inChat = pageId === 'chatPage';
+  $('tabBar').classList.toggle('hidden', inChat);
+  $('chatMenuBtn').classList.toggle('hidden', !inChat);
+  // 同步底部标签高亮
+  const tab = Object.keys(TAB_PAGES).find((k) => TAB_PAGES[k] === pageId);
+  if (tab) setActiveTab(tab);
   window.scrollTo(0, 0);
 }
+
+/** 设置底部标签高亮 */
+function setActiveTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab-item').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  $('pageTitle').textContent = TAB_TITLES[tab] || '微聊';
+}
+
+/** 切换到底部某个标签 */
+function switchTab(tab) {
+  if (!TAB_PAGES[tab]) return;
+  state.current = null;
+  const pageId = TAB_PAGES[tab];
+  showPage(pageId, TAB_TITLES[tab]);
+  setActiveTab(tab);
+  if (tab === 'chats') refreshConversations();
+  if (tab === 'contacts') refreshFriends();
+  if (tab === 'discover') refreshDiscover();
+  if (tab === 'me') refreshProfile();
+}
+
+document.querySelectorAll('.tab-item').forEach((btn) => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
 
 $('backBtn').addEventListener('click', () => {
   if (!$('chatPage').classList.contains('hidden')) {
     state.current = null;
-    showPage('conversationsPage', '微聊');
+    showPage('conversationsPage', '微信');
+    setActiveTab('chats');
     refreshConversations();
   } else {
-    showPage('conversationsPage', '微聊');
+    showPage('conversationsPage', '微信');
+    setActiveTab('chats');
     refreshConversations();
   }
 });
@@ -590,11 +704,17 @@ function renderConversations() {
   const list = state.conversations;
   $('convEmpty').classList.toggle('hidden', list.length > 0);
   box.innerHTML = list.map((c) => `
-    <button class="conv-item" data-conv="${escapeHtml(c.conversationId)}" data-type="${c.type}" data-target="${escapeHtml(c.targetId)}">
-      ${avatarHtml(c.title, c.avatarColor, c.avatar || '')}
+    <button class="conv-item ${c.pinned ? 'is-pinned' : ''}" data-conv="${escapeHtml(c.conversationId)}" data-type="${c.type}" data-target="${escapeHtml(c.targetId)}">
+      <span class="conv-avatar-wrap" data-act="profile">
+        ${avatarHtml(c.title, c.avatarColor, c.avatar || '')}
+      </span>
       <div class="conv-main">
         <div class="conv-top">
-          <div class="conv-title">${escapeHtml(c.title)}</div>
+          <div class="conv-title">
+            ${c.pinned ? '<span class="conv-pin">📌</span>' : ''}
+            ${c.muted ? '<span class="conv-mute">🔕</span>' : ''}
+            ${escapeHtml(c.title)}
+          </div>
           <div class="conv-time">${formatTime(c.lastTime)}</div>
         </div>
         <div class="conv-bottom">
@@ -606,12 +726,53 @@ function renderConversations() {
   `).join('');
 
   box.querySelectorAll('.conv-item').forEach((el) => {
-    el.addEventListener('click', () => openChat(el.dataset.type, el.dataset.target, el.querySelector('.conv-title').textContent));
+    el.addEventListener('click', (e) => {
+      // 点击头像 → 打开个人资料卡；点击其他区域 → 进入聊天
+      if (e.target.closest('[data-act="profile"]')) {
+        e.stopPropagation();
+        openConvProfile(el.dataset.type, el.dataset.target);
+        return;
+      }
+      openChat(el.dataset.type, el.dataset.target, el.querySelector('.conv-title').textContent.trim());
+    });
   });
 
   // 汇总未读数 → 标题角标
   state.unreadTotal = list.reduce((s, c) => s + (c.unread || 0), 0);
   updateTitleBadge();
+  updateTabBadge();
+}
+
+/** 从会话列表打开个人资料卡 */
+function openConvProfile(type, targetId) {
+  if (type === 'group') {
+    const g = state.groups.find((x) => x.id === targetId);
+    if (!g) return;
+    openProfileCard({
+      id: g.id,
+      username: 'group_' + g.id,
+      nickname: g.name,
+      avatarColor: g.avatarColor,
+      avatar: g.avatar || '',
+      createdAt: g.createdAt
+    }, {
+      isFriend: false,
+      extraFacts: [['群成员', g.memberCount + ' 人'], ['群主', g.ownerId === state.user.id ? '我' : (g.members.find((m) => m.isOwner)?.nickname || '—')]],
+      extraActionText: '群成员',
+      onCloseAction: () => showGroupMembers(g.id)
+    });
+    return;
+  }
+  const f = state.friends.find((x) => x.peer.id === targetId);
+  const peer = f ? f.peer : null;
+  if (!peer) {
+    toast('对方资料暂不可用', 'error');
+    return;
+  }
+  openProfileCard(peer, {
+    isFriend: true,
+    onMessage: () => openChat('dm', peer.id, peer.nickname || peer.username)
+  });
 }
 
 /* ==================== 渲染：好友 ==================== */
@@ -856,14 +1017,31 @@ function confirmDeleteGroup(groupId) {
 }
 
 /* ==================== 聊天 ==================== */
+
+/** 当前聊天设置（免打扰 / 置顶 / 背景） */
+let chatSettings = { muted: false, pinned: false, background: '' };
+
 async function openChat(type, targetId, title) {
-  state.current = { type, targetId, title };
+  // 单聊时把对方资料存进 current，供聊天信息面板使用
+  const peer = type === 'dm'
+    ? (state.friends.find((x) => x.peer.id === targetId)?.peer || null)
+    : null;
+  state.current = { type, targetId, title, peer };
   showPage('chatPage', title);
   $('chatBody').innerHTML = '';
   state.messages = [];
 
   const convId = type === 'group' ? 'group:' + targetId : dmId(state.user.id, targetId);
   state.current.conversationId = convId;
+
+  // 读取并应用聊天设置（背景）
+  try {
+    const sres = await api('/api/chat/settings?conversationId=' + encodeURIComponent(convId));
+    chatSettings = sres.settings || { muted: false, pinned: false, background: '' };
+  } catch (e) {
+    chatSettings = { muted: false, pinned: false, background: '' };
+  }
+  applyChatBackground(chatSettings.background);
 
   try {
     const res = await api('/api/messages?conversationId=' + encodeURIComponent(convId));
@@ -894,10 +1072,10 @@ function renderMessages() {
     let bubbleCls = 'msg-bubble';
     if (isImage) {
       bubbleCls += ' msg-image';
-      bubbleInner = `<img src="${escapeHtml(absUrl(m.content))}" alt="图片" loading="lazy" />`;
+      bubbleInner = `<img src="${escapeHtml(mediaUrl(m.content))}" alt="图片" loading="lazy" />`;
     } else if (isSticker) {
       bubbleCls += ' msg-sticker';
-      bubbleInner = `<img src="${escapeHtml(absUrl(m.content))}" alt="表情包" loading="lazy" />`;
+      bubbleInner = `<img src="${escapeHtml(mediaUrl(m.content))}" alt="表情包" loading="lazy" />`;
     } else {
       bubbleInner = escapeHtml(m.content);
     }
@@ -907,7 +1085,9 @@ function renderMessages() {
 
     return `
       <div class="msg-row ${mine ? 'mine' : ''}">
-        ${avatar}
+        <span class="msg-avatar-wrap" data-msg-user="${escapeHtml(m.from)}" title="查看资料">
+          ${avatar}
+        </span>
         <div class="msg-col">
           ${!mine ? `<div class="msg-sender">${escapeHtml(m.fromName)}</div>` : ''}
           <div class="${bubbleCls}">${bubbleInner}</div>
@@ -916,6 +1096,40 @@ function renderMessages() {
       </div>`;
   }).join('');
   box.scrollTop = box.scrollHeight;
+
+  // 点击消息头像 → 查看资料卡
+  box.querySelectorAll('[data-msg-user]').forEach((el) => {
+    el.addEventListener('click', () => openUserProfileById(el.dataset.msgUser));
+  });
+}
+
+/** 按用户 ID 打开个人资料卡 */
+function openUserProfileById(userId) {
+  if (!userId) return;
+  if (userId === state.user.id) {
+    openProfileCard(state.user, { isSelf: true });
+    return;
+  }
+  const f = state.friends.find((x) => x.peer.id === userId);
+  if (f) {
+    openProfileCard(f.peer, {
+      isFriend: true,
+      onMessage: () => openChat('dm', f.peer.id, f.peer.nickname || f.peer.username)
+    });
+    return;
+  }
+  // 群成员：从群列表里找
+  for (const g of state.groups) {
+    const m = g.members.find((x) => x.id === userId);
+    if (m) {
+      openProfileCard(m, {
+        isFriend: false,
+        onMessage: () => openChat('dm', m.id, m.nickname || m.username)
+      });
+      return;
+    }
+  }
+  toast('对方资料暂不可用', 'error');
 }
 
 function avatarColorOf(userId) {
@@ -1017,7 +1231,7 @@ function renderBuiltInStickers() {
   }
   box.innerHTML = state.builtInStickers.map((s) => `
     <button class="sticker-item" data-sticker="${escapeHtml(s.url)}" title="${escapeHtml(s.name)}">
-      <img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.name)}" loading="lazy" />
+      <img src="${escapeHtml(assetUrl(s.url))}" alt="${escapeHtml(s.name)}" loading="lazy" />
     </button>
   `).join('');
   box.querySelectorAll('[data-sticker]').forEach((b) => {
@@ -1043,7 +1257,7 @@ function renderMyStickers() {
     }
     box.innerHTML = state.stickers.map((s) => `
       <button class="sticker-item" data-mine-sticker="${escapeHtml(s.url)}" data-id="${escapeHtml(s.id)}" title="${escapeHtml(s.name || '表情包')}">
-        <img src="${escapeHtml(absUrl(s.url))}" alt="" loading="lazy" />
+        <img src="${escapeHtml(mediaUrl(s.url))}" alt="" loading="lazy" />
         <span class="sticker-del" data-del-sticker="${escapeHtml(s.id)}">×</span>
       </button>
     `).join('');
@@ -1085,8 +1299,11 @@ async function loadStickers() {
 /** 加载内置斗图清单 */
 async function loadBuiltInStickers() {
   try {
-    const res = await fetch('stickers/manifest.json');
+    // 用 assetUrl 补全，避免站点挂在 /weiliao/ 子路径下时解析错位
+    const res = await fetch(assetUrl('stickers/manifest.json'), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const list = await res.json();
+    // 保留原始相对路径，渲染时再补全（避免把绝对地址写进历史消息）
     state.builtInStickers = Array.isArray(list) ? list : [];
     renderBuiltInStickers();
   } catch (e) {
@@ -1269,9 +1486,402 @@ async function handleStickerFile(file) {
   });
 });
 
+/* ============================================================
+   「发现」页面按钮
+   ============================================================ */
+$('discoverStickers')?.addEventListener('click', () => {
+  switchTab('me');
+  toast('在「我 → 我的表情包」中管理');
+});
+
+$('discoverGroups')?.addEventListener('click', () => {
+  switchTab('chats');
+  showPage('groupsPanel', '我的群聊');
+  refreshGroups();
+});
+
+/* ============================================================
+   微信风格：个人资料卡（点击头像查看）
+   ============================================================ */
+
+/**
+ * 打开个人资料卡
+ * @param {object} user 用户对象 { id, username, nickname, avatarColor, avatar, isAdmin, createdAt }
+ * @param {object} opts { isSelf, onMessage }
+ */
+function openProfileCard(user, opts = {}) {
+  if (!user) return;
+  const u = user;
+  const color = u.avatarColor || '#2b6de8';
+  const avatarInner = u.avatar
+    ? `<img src="${escapeHtml(mediaUrl(u.avatar))}" alt="" />`
+    : escapeHtml(initial(u.nickname || u.username));
+
+  const tags = [];
+  if (u.isAdmin) tags.push('<span class="pcard-tag">管理员</span>');
+  if (opts.isSelf) tags.push('<span class="pcard-tag tag-gray">这是我自己</span>');
+  else if (u.isFriend) tags.push('<span class="pcard-tag tag-green">已是好友</span>');
+
+  const facts = [];
+  facts.push(['昵称', u.nickname || u.username]);
+  facts.push(['账号', '@' + u.username]);
+  if (u.createdAt) facts.push(['注册时间', new Date(Number(u.createdAt)).toLocaleString('zh-CN')]);
+  if (opts.isSelf && u.lastLoginAt) facts.push(['最后登录', new Date(Number(u.lastLoginAt)).toLocaleString('zh-CN')]);
+  if (opts.extraFacts) facts.push(...opts.extraFacts);
+
+  const actions = [];
+  if (opts.isSelf) {
+    actions.push('<button class="btn btn-primary" id="pcardEdit">编辑资料</button>');
+  } else if (opts.onMessage) {
+    actions.push('<button class="btn btn-primary" id="pcardMsg">发消息</button>');
+  }
+  if (opts.onDelete) {
+    actions.push('<button class="btn btn-danger" id="pcardDel">删除</button>');
+  }
+  if (opts.onCloseAction) {
+    actions.push(`<button class="btn" id="pcardExtra">${escapeHtml(opts.extraActionText || '更多')}</button>`);
+  }
+
+  $('profileCardSheet').innerHTML = `
+    <div class="pcard">
+      <div class="pcard-avatar" style="background:${escapeHtml(color)}">${avatarInner}</div>
+      <div class="pcard-name">${escapeHtml(u.nickname || u.username)}</div>
+      <div class="pcard-account">@${escapeHtml(u.username)}</div>
+      ${tags.length ? `<div class="pcard-tags">${tags.join('')}</div>` : ''}
+      <div class="pcard-facts">
+        ${facts.map(([k, v]) => `
+          <div class="pcard-fact">
+            <span class="pcard-fact-k">${escapeHtml(k)}</span>
+            <span class="pcard-fact-v">${escapeHtml(String(v))}</span>
+          </div>`).join('')}
+      </div>
+      ${actions.length ? `<div class="pcard-actions">${actions.join('')}</div>` : ''}
+    </div>`;
+
+  $('profileCardMask').classList.remove('hidden');
+
+  const close = () => $('profileCardMask').classList.add('hidden');
+  const editBtn = $('pcardEdit');
+  if (editBtn) editBtn.addEventListener('click', () => { close(); switchTab('me'); });
+  const msgBtn = $('pcardMsg');
+  if (msgBtn) msgBtn.addEventListener('click', () => { close(); opts.onMessage(); });
+  const delBtn = $('pcardDel');
+  if (delBtn) delBtn.addEventListener('click', () => { close(); opts.onDelete(); });
+  const extraBtn = $('pcardExtra');
+  if (extraBtn) extraBtn.addEventListener('click', () => { close(); opts.onCloseAction(); });
+}
+
+$('profileCardMask').addEventListener('click', (e) => {
+  if (e.target === $('profileCardMask')) $('profileCardMask').classList.add('hidden');
+});
+
+/* ============================================================
+   微信风格：聊天信息面板（左上角三个点）
+   ============================================================ */
+
+/** 打开聊天信息面板 */
+async function openChatSheet() {
+  const cur = state.current;
+  if (!cur) return;
+  const convId = cur.conversationId;
+
+  // 读取设置
+  try {
+    const res = await api('/api/chat/settings?conversationId=' + encodeURIComponent(convId));
+    chatSettings = res.settings || { muted: false, pinned: false, background: '' };
+  } catch (e) {
+    console.warn('[chat] 读取聊天设置失败', e);
+  }
+
+  // 标题与头像
+  let title = cur.title || '聊天';
+  let color = '#2b6de8';
+  let avatarInner = escapeHtml(initial(title));
+  const peer = cur.peer;
+  if (cur.type === 'dm' && peer) {
+    color = peer.avatarColor || '#2b6de8';
+    avatarInner = peer.avatar
+      ? `<img src="${escapeHtml(mediaUrl(peer.avatar))}" alt="" />`
+      : escapeHtml(initial(peer.nickname || peer.username));
+  } else if (cur.type === 'group') {
+    const g = state.groups.find((x) => x.id === cur.targetId);
+    if (g) {
+      color = g.avatarColor || '#2b6de8';
+      title = g.name;
+      avatarInner = escapeHtml(initial(g.name));
+    }
+  }
+
+  const groupExtra = cur.type === 'group'
+    ? `<button class="sheet-item" data-sheet-act="members">
+         <span class="si-icon">👥</span>
+         <span class="si-main"><span class="si-title">群成员</span></span>
+         <span class="row-arrow">›</span>
+       </button>`
+    : '';
+
+  $('chatSheet').innerHTML = `
+    <div class="sheet-head">
+      <div class="avatar" style="background:${escapeHtml(color)}">${avatarInner}</div>
+      <div class="sheet-head-main">
+        <div class="sheet-head-name">${escapeHtml(title)}</div>
+        <div class="sheet-head-sub">${cur.type === 'group' ? '群聊' : '单聊'}</div>
+      </div>
+      <button class="sheet-close" data-sheet-act="close">✕</button>
+    </div>
+    <div class="sheet-list">
+      <button class="sheet-item" data-sheet-act="search">
+        <span class="si-icon">🔍</span>
+        <span class="si-main"><span class="si-title">查找聊天内容</span></span>
+        <span class="row-arrow">›</span>
+      </button>
+      <div class="sheet-divider"></div>
+      <label class="sheet-item">
+        <span class="si-icon">🔕</span>
+        <span class="si-main">
+          <span class="si-title">消息免打扰</span>
+          <span class="si-sub">不再提醒此会话的新消息</span>
+        </span>
+        <span class="switch"><input type="checkbox" id="swMute" ${chatSettings.muted ? 'checked' : ''} /><span class="switch-slider"></span></span>
+      </label>
+      <label class="sheet-item">
+        <span class="si-icon">📌</span>
+        <span class="si-main">
+          <span class="si-title">置顶聊天</span>
+          <span class="si-sub">保持在会话列表最上方</span>
+        </span>
+        <span class="switch"><input type="checkbox" id="swPin" ${chatSettings.pinned ? 'checked' : ''} /><span class="switch-slider"></span></span>
+      </label>
+      <div class="sheet-divider"></div>
+      <button class="sheet-item" data-sheet-act="background">
+        <span class="si-icon">🎨</span>
+        <span class="si-main">
+          <span class="si-title">设置聊天背景</span>
+          <span class="si-sub">${chatSettings.background ? '已设置自定义背景' : '使用默认背景'}</span>
+        </span>
+        <span class="row-arrow">›</span>
+      </button>
+      ${groupExtra}
+      <div class="sheet-divider"></div>
+      <button class="sheet-item danger" data-sheet-act="clear">
+        <span class="si-icon">🗑️</span>
+        <span class="si-main"><span class="si-title">清空聊天记录</span></span>
+      </button>
+    </div>`;
+
+  $('chatSheetMask').classList.remove('hidden');
+
+  // 免打扰开关
+  $('swMute').addEventListener('change', async (e) => {
+    await saveChatSetting(convId, { muted: e.target.checked });
+  });
+  // 置顶开关
+  $('swPin').addEventListener('change', async (e) => {
+    await saveChatSetting(convId, { pinned: e.target.checked });
+  });
+
+  // 面板内各项操作
+  $('chatSheet').querySelectorAll('[data-sheet-act]').forEach((el) => {
+    el.addEventListener('click', async (e) => {
+      const act = el.dataset.sheetAct;
+      if (act === 'close') { closeChatSheet(); return; }
+      if (act === 'search') { closeChatSheet(); openChatSearch(); return; }
+      if (act === 'background') { closeChatSheet(); openBackgroundPicker(); return; }
+      if (act === 'members') { closeChatSheet(); showGroupMembers(cur.targetId); return; }
+      if (act === 'clear') { closeChatSheet(); confirmClearChat(convId); return; }
+    });
+  });
+}
+
+function closeChatSheet() {
+  $('chatSheetMask').classList.add('hidden');
+}
+
+$('chatSheetMask').addEventListener('click', (e) => {
+  if (e.target === $('chatSheetMask')) closeChatSheet();
+});
+
+$('chatMenuBtn').addEventListener('click', () => openChatSheet());
+
+/** 保存一项聊天设置 */
+async function saveChatSetting(conversationId, patch) {
+  try {
+    const res = await api('/api/chat/settings', { method: 'POST', body: { conversationId, ...patch } });
+    chatSettings = res.settings || chatSettings;
+    applyChatBackground(chatSettings.background);
+    refreshConversations();
+    return true;
+  } catch (e) {
+    toast(e.message || '保存失败', 'error');
+    return false;
+  }
+}
+
+/** 应用聊天背景 */
+function applyChatBackground(bg) {
+  const body = $('chatBody');
+  if (!body) return;
+  if (!bg) {
+    body.style.backgroundImage = '';
+    body.classList.remove('custom-bg');
+    return;
+  }
+  // CSS 渐变直接作为 background-image；图片地址走 url()
+  const isGradient = /^(linear|radial)-gradient\(/i.test(bg);
+  body.style.backgroundImage = isGradient ? bg : `url("${bg.replace(/"/g, '\\"')}")`;
+  body.classList.add('custom-bg');
+}
+
+/** 选择聊天背景 */
+function openBackgroundPicker() {
+  const presets = [
+    { name: '默认', value: '' },
+    { name: '浅蓝', value: 'linear-gradient(160deg,#dbeafe,#e0e7ff)' },
+    { name: '浅绿', value: 'linear-gradient(160deg,#d1fae5,#ecfccb)' },
+    { name: '浅粉', value: 'linear-gradient(160deg,#fce7f3,#f3e8ff)' },
+    { name: '浅灰', value: 'linear-gradient(160deg,#f1f5f9,#e2e8f0)' },
+    { name: '深色', value: 'linear-gradient(160deg,#1f2937,#111827)' }
+  ];
+  const html = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+      ${presets.map((p, i) => `
+        <button class="bg-pick" data-bg="${escapeHtml(p.value)}" data-idx="${i}" style="
+          height:62px;border-radius:11px;border:2px solid ${p.value ? '#e2e5ea' : 'transparent'};
+          background:${p.value || 'linear-gradient(160deg,#f5f6f8,#ebedf0)'};
+          display:flex;align-items:flex-end;justify-content:center;padding-bottom:5px;font-size:12px;color:#64748b;">
+          ${escapeHtml(p.name)}
+        </button>`).join('')}
+    </div>
+    <div style="margin-top:14px;">
+      <div class="field-label">或使用已上传的图片作为背景</div>
+      <input type="file" id="bgFileInput" accept="image/png,image/jpeg,image/webp" />
+    </div>`;
+
+  openModal({
+    title: '设置聊天背景',
+    bodyHtml: html,
+    okText: '确定',
+    onOk: async () => {
+      const picked = document.querySelector('.bg-pick.is-picked');
+      if (picked) {
+        const val = picked.dataset.bg;
+        await saveChatSetting(state.current.conversationId, { background: val });
+        toast('背景已更新', 'success');
+        return true;
+      }
+      return false;
+    }
+  });
+
+  // 选中高亮
+  $('modalBody').querySelectorAll('.bg-pick').forEach((b) => {
+    b.addEventListener('click', () => {
+      $('modalBody').querySelectorAll('.bg-pick').forEach((x) => x.classList.remove('is-picked'));
+      b.classList.add('is-picked');
+      b.style.borderColor = '#2b6de8';
+      $('modalBody').querySelectorAll('.bg-pick').forEach((x) => { if (x !== b) x.style.borderColor = '#e2e5ea'; });
+    });
+  });
+
+  // 上传自定义背景
+  const fileInput = $('bgFileInput');
+  if (fileInput) {
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const url = await uploadImage(file, 'bg');
+        await saveChatSetting(state.current.conversationId, { background: url });
+        toast('背景已更新', 'success');
+        closeModal();
+      } catch (err) {
+        toast(err.message || '背景设置失败', 'error');
+      }
+    });
+  }
+}
+
+/** 查找聊天内容 */
+function openChatSearch() {
+  openModal({
+    title: '查找聊天内容',
+    bodyHtml: `
+      <input type="text" id="chatSearchInput" placeholder="输入关键词搜索本会话消息" />
+      <div id="chatSearchResult" style="margin-top:12px;max-height:40vh;overflow:auto;"></div>`,
+    okText: '搜索',
+    cancelText: '关闭',
+    onOk: async () => {
+      const kw = $('chatSearchInput').value.trim();
+      if (!kw) return false;
+      const box = $('chatSearchResult');
+      const hits = state.messages.filter((m) => String(m.content || '').includes(kw));
+      box.innerHTML = hits.length
+        ? hits.map((m) => `
+            <div class="sheet-item" style="padding:10px 0;">
+              <span class="si-main">
+                <span class="si-title" style="font-size:13.5px;">${escapeHtml(String(m.content).slice(0, 80))}</span>
+                <span class="si-sub">${escapeHtml(m.fromName)} · ${escapeHtml(formatTime(m.createdAt))}</span>
+              </span>
+            </div>`).join('')
+        : '<div class="row-sub">没有找到相关消息</div>';
+      return false;
+    }
+  });
+}
+
+/** 确认清空聊天记录 */
+function confirmClearChat(conversationId) {
+  openModal({
+    title: '清空聊天记录',
+    bodyHtml: '<div>确定要清空与该会话的全部聊天记录吗？此操作不可恢复。</div>',
+    okText: '清空',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        const res = await api('/api/chat/clear', { method: 'POST', body: { conversationId } });
+        state.messages = [];
+        renderMessages();
+        refreshConversations();
+        toast(`已清空 ${res.removed || 0} 条消息`, 'success');
+        return true;
+      } catch (e) {
+        toast(e.message || '清空失败', 'error');
+        return false;
+      }
+    }
+  });
+}
+
+/** 显示群成员 */
+function showGroupMembers(groupId) {  const g = state.groups.find((x) => x.id === groupId);
+  if (!g) {
+    // 群不在我的列表里（可能刚被邀请），重新拉取
+    api('/api/groups').then((res) => {
+      state.groups = res.groups || [];
+      const gg = state.groups.find((x) => x.id === groupId);
+      if (gg) showGroupMembers(groupId);
+      else toast('群聊不存在', 'error');
+    });
+    return;
+  }
+  openModal({
+    title: '群成员',
+    bodyHtml: g.members.map((m) => `
+      <div class="row-item" style="padding:9px 0;">
+        ${avatarHtml(m.nickname, m.avatarColor, m.avatar, 'avatar-sm')}
+        <div class="row-main">
+          <div class="row-name">${escapeHtml(m.nickname)}${m.isOwner ? '<span class="tag tag-blue">群主</span>' : ''}</div>
+          <div class="row-sub">@${escapeHtml(m.username)}</div>
+        </div>
+      </div>`).join(''),
+    okText: '关闭',
+    hideCancel: true,
+    onOk: () => true
+  });
+}
+
 /* ==================== 模态框 ==================== */
 let modalOkHandler = null;
-
 function openModal({ title, bodyHtml, okText = '确定', cancelText = '取消', hideCancel = false, onOk }) {
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = bodyHtml;
