@@ -289,8 +289,11 @@ export function clearConversation(userId, conversationId) {
  * 保存消息。type: text | emoji | image | sticker
  * 单聊：conversationId = `dm:<userIdA>:<userIdB>`（按 id 排序）
  * 群聊：conversationId = `group:<groupId>`
+ *
+ * 端到端加密：content 存放加密载荷（JSON 字符串），
+ * 服务端无法解析出明文；cipher=1 标记该消息已加密。
  */
-export function createMessage({ fromUserId, toType, toId, content, type = 'text' }) {
+export function createMessage({ fromUserId, toType, toId, content, type = 'text', cipher = null, fileIv = '' }) {
   const sender = db().users.find((u) => u.id === fromUserId);
   if (!sender) return { error: '用户不存在' };
   const text = String(content || '').trim();
@@ -300,6 +303,8 @@ export function createMessage({ fromUserId, toType, toId, content, type = 'text'
   if (msgType === 'text' && text.length > 5000) return { error: '消息过长' };
   // 图片/表情包内容为 URL，长度限制放宽
   if (msgType !== 'text' && text.length > 500) return { error: '内容过长' };
+  // 加密载荷可能较长（群聊逐成员加密），单独放宽
+  if (cipher && text.length > 200000) return { error: '消息过长' };
 
   let conversationId = '';
   let participants = [];
@@ -324,6 +329,10 @@ export function createMessage({ fromUserId, toType, toId, content, type = 'text'
     conversationId,
     type: msgType,
     content: text,
+    // 端到端加密标记：1 = 内容为加密载荷
+    cipher: cipher ? 1 : 0,
+    // 图片密文的 GCM IV（解密图片时需要）
+    fileIv: fileIv || '',
     from: fromUserId,
     fromName: sender.nickname || sender.username,
     toType,
@@ -349,6 +358,8 @@ export function serializeMessage(m) {
     conversationId: m.conversationId,
     type: m.type,
     content: m.content,
+    cipher: m.cipher ? 1 : 0,
+    fileIv: m.fileIv || '',
     from: m.from,
     fromName: m.fromName,
     toType: m.toType,
@@ -374,6 +385,8 @@ export function dmConversationId(a, b) {
 
 /** 会话列表里显示的最后一条消息摘要 */
 export function previewText(m) {
+  // 加密消息服务端看不到明文，只显示占位
+  if (m.cipher) return '[加密消息]';
   if (m.type === 'image') return '[图片]';
   if (m.type === 'sticker') return '[表情包]';
   return m.content;

@@ -63,7 +63,10 @@ export function publicUser(user) {
     avatar: user.avatar || '',
     isAdmin: !!user.isAdmin,
     createdAt: user.createdAt,
-    lastLoginAt: user.lastLoginAt
+    lastLoginAt: user.lastLoginAt,
+    // 加密相关：只暴露公钥，绝不暴露私钥密文之外的任何东西
+    cryptoPublicKey: user.cryptoPublicKey || '',
+    cryptoSigPublicKey: user.cryptoSigPublicKey || ''
   };
 }
 
@@ -77,6 +80,12 @@ export function createUser({ username, password, nickname, isAdmin = false }) {
     avatarColor: randomColor(),
     avatar: '',
     isAdmin,
+    // 端到端加密：身份密钥材料
+    cryptoSalt: '',
+    cryptoPublicKey: '',
+    cryptoSigPublicKey: '',
+    cryptoEncPrivate: '',
+    cryptoSigPrivate: '',
     createdAt: Date.now(),
     lastLoginAt: null
   };

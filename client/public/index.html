@@ -216,6 +216,23 @@
           </div>
 
           <div class="section-block">
+            <div class="section-title">安全与隐私</div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">端到端加密</div>
+                <div class="setting-sub" id="e2eeSubStatus">聊天内容在传输前加密，服务端无法读取明文</div>
+              </div>
+              <label class="switch"><input type="checkbox" id="e2eeToggle" /><span class="switch-slider"></span></label>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-name">加密状态</div>
+                <div class="setting-sub" id="e2eeStatus">检查中…</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
             <div class="section-title">消息提醒</div>
             <div class="setting-row">
               <div>
@@ -382,6 +399,7 @@
   </div>
 
   <script src="config.js?v=1"></script>
+  <script src="e2ee.js?v=1"></script>
   <script src="app.js?v=6"></script>
 </body>
 </html>

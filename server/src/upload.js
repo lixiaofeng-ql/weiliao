@@ -19,7 +19,9 @@ const MIME_EXT = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
   'image/gif': 'gif',
-  'image/webp': 'webp'
+  'image/webp': 'webp',
+  // 端到端加密：上传的是密文，统一按 bin 存
+  'application/octet-stream': 'bin'
 };
 
 /** 确保目录存在 */
@@ -56,6 +58,28 @@ export function saveImage(dataUrl, prefix = 'img') {
   const name = `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(6).toString('hex')}.${ext}`;
   fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
   return { url: `/uploads/${name}`, bytes: buf.length, mime };
+}
+
+/**
+ * 保存一段二进制数据（端到端加密的密文文件）。
+ * @param {string} b64 base64 字符串
+ * @param {string} prefix 文件名前缀
+ */
+export function saveBinary(b64, prefix = 'enc') {
+  if (typeof b64 !== 'string' || !b64) return { error: '缺少文件数据' };
+  let buf;
+  try {
+    buf = Buffer.from(b64, 'base64');
+  } catch {
+    return { error: '文件解析失败' };
+  }
+  if (!buf.length) return { error: '文件内容为空' };
+  if (buf.length > MAX_BYTES) return { error: '文件过大' };
+
+  ensureUploadDir();
+  const name = `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(6).toString('hex')}.bin`;
+  fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+  return { url: `/uploads/${name}`, bytes: buf.length, mime: 'application/octet-stream' };
 }
 
 /** 删除已上传的文件 */

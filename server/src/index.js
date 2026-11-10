@@ -34,7 +34,7 @@ import {
   updateChatSettings,
   clearConversation
 } from './logic.js';
-import { saveImage, removeUpload, ensureUploadDir, UPLOAD_DIR } from './upload.js';
+import { saveImage, saveBinary, removeUpload, ensureUploadDir, UPLOAD_DIR } from './upload.js';
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -198,6 +198,14 @@ app.post('/api/upload', auth, (req, res) => {
   res.json({ success: true, url: result.url, bytes: result.bytes });
 });
 
+/** 上传加密后的文件（端到端加密的图片 / 表情包密文） */
+app.post('/api/upload/enc', auth, (req, res) => {
+  const { data, prefix } = req.body || {};
+  const result = saveBinary(data, 'enc');
+  if (result.error) return res.json({ success: false, message: result.error });
+  res.json({ success: true, url: result.url, bytes: result.bytes });
+});
+
 // ============ 自定义表情包 ============
 
 app.get('/api/stickers', auth, (req, res) => {
@@ -354,17 +362,90 @@ app.get('/api/messages', auth, (req, res) => {
 });
 
 app.post('/api/messages', auth, (req, res) => {
-  const { toType, toId, content, type } = req.body || {};
+  const { toType, toId, content, type, cipher, fileIv } = req.body || {};
   const result = createMessage({
     fromUserId: req.user.id,
     toType: toType || 'dm',
     toId,
     content,
-    type: type || 'text'
+    type: type || 'text',
+    cipher: cipher || null,
+    fileIv: fileIv || ''
   });
   if (result.error) return res.json({ success: false, message: result.error });
   broadcastMessage(result.message);
   res.json({ success: true, message: result.message });
+});
+
+// ============ 端到端加密接口 ============
+
+/**
+ * 上传/更新本用户的加密身份材料。
+ * 服务端只做「存取」，无法解开私钥（私钥用密码派生的 KEK 加密后才上传）。
+ */
+app.post('/api/crypto/keys', auth, (req, res) => {
+  const u = req.user;
+  const {
+    cryptoSalt,
+    cryptoPublicKey,
+    cryptoSigPublicKey,
+    cryptoEncPrivate,
+    cryptoSigPrivate
+  } = req.body || {};
+
+  // 全量提交：要么都提供，要么都不改
+  const all = [cryptoSalt, cryptoPublicKey, cryptoSigPublicKey, cryptoEncPrivate, cryptoSigPrivate];
+  const provided = all.filter((v) => v !== undefined && v !== null && v !== '');
+  if (provided.length === 0) {
+    return res.json({ success: false, message: '缺少密钥参数' });
+  }
+  if (provided.length !== all.length) {
+    return res.json({ success: false, message: '密钥参数不完整' });
+  }
+
+  u.cryptoSalt = String(cryptoSalt);
+  u.cryptoPublicKey = String(cryptoPublicKey);
+  u.cryptoSigPublicKey = String(cryptoSigPublicKey);
+  u.cryptoEncPrivate = String(cryptoEncPrivate);
+  u.cryptoSigPrivate = String(cryptoSigPrivate);
+  saveNow();
+  res.json({ success: true, publicKey: u.cryptoPublicKey, sigPublicKey: u.cryptoSigPublicKey });
+});
+
+/**
+ * 拉取会话内相关用户的公钥。
+ * 只返回公钥，私钥永不下发。
+ */
+app.get('/api/crypto/keys', auth, (req, res) => {
+  const ids = String(req.query.ids || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const unique = [...new Set(ids)].slice(0, 200);
+  const keys = db()
+    .users.filter((u) => unique.includes(u.id))
+    .map((u) => ({
+      id: u.id,
+      username: u.username,
+      nickname: u.nickname || u.username,
+      cryptoPublicKey: u.cryptoPublicKey || '',
+      cryptoSigPublicKey: u.cryptoSigPublicKey || ''
+    }));
+  res.json({ success: true, keys });
+});
+
+/** 取回自己的私钥密文（用于本地解锁） */
+app.get('/api/crypto/me', auth, (req, res) => {
+  const u = req.user;
+  res.json({
+    success: true,
+    crypto: {
+      id: u.id,
+      username: u.username,
+      cryptoSalt: u.cryptoSalt || '',
+      cryptoPublicKey: u.cryptoPublicKey || '',
+      cryptoSigPublicKey: u.cryptoSigPublicKey || '',
+      cryptoEncPrivate: u.cryptoEncPrivate || '',
+      cryptoSigPrivate: u.cryptoSigPrivate || ''
+    }
+  });
 });
 
 app.post('/api/messages/read', auth, (req, res) => {
@@ -587,7 +668,9 @@ function handleWsMessage(ws, user, msg) {
       toType: msg.toType || 'dm',
       toId: msg.toId,
       content: msg.content,
-      type: msg.type || 'text'
+      type: msg.type || 'text',
+      cipher: msg.cipher || null,
+      fileIv: msg.fileIv || ''
     });
     if (result.error) {
       sendToWs(ws, { action: 'error', message: result.error });

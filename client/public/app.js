@@ -335,12 +335,15 @@ $('loginForm').addEventListener('submit', async (e) => {
   const btn = $('loginBtn');
   btn.disabled = true;
   btn.textContent = '登录中...';
+  const password = $('loginPassword').value;
   try {
     const res = await api('/api/auth/login', {
       method: 'POST',
-      body: { username: $('loginUsername').value.trim(), password: $('loginPassword').value }
+      body: { username: $('loginUsername').value.trim(), password }
     });
     onLogin(res);
+    // 端到端加密：用同一密码解锁本机私钥
+    initE2EE(res, password);
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -367,6 +370,8 @@ $('registerForm').addEventListener('submit', async (e) => {
       body: { username, password, nickname: $('regNickname').value.trim() }
     });
     onLogin(res);
+    // 端到端加密：为新账号生成身份密钥
+    initE2EE(res, password);
     toast('注册成功', 'success');
   } catch (err) {
     toast(err.message, 'error');
@@ -375,6 +380,166 @@ $('registerForm').addEventListener('submit', async (e) => {
     btn.textContent = '注 册';
   }
 });
+
+/* ============================================================
+   端到端加密（E2EE）集成层
+   ------------------------------------------------------------
+   与 e2ee.js 配合：
+   - 登录后用密码解锁本机私钥（私钥密文存在服务端，密码解不开就废）
+   - 发送前加密，收到后解密，服务端全程只见密文
+   ============================================================ */
+
+/** E2EE 是否启用（本地开关，存在 localStorage） */
+function e2eeEnabled() {
+  return localStorage.getItem('wl_e2ee') === '1';
+}
+
+/** 开启 / 关闭 E2EE */
+function setE2eeEnabled(on) {
+  localStorage.setItem('wl_e2ee', on ? '1' : '0');
+  window.WL_E2EE_READY = false;
+  if (!on && window.E2EE) window.E2EE.lock();
+}
+
+/**
+ * 登录后初始化 E2EE。
+ * @param {object} res 登录/注册响应
+ * @param {string} password 明文密码（仅本地使用，不上传）
+ */
+async function initE2EE(res, password) {
+  if (!window.E2EE) return;
+  if (!e2eeEnabled()) {
+    window.WL_E2EE_READY = false;
+    return;
+  }
+  try {
+    // 取回自己的私钥密文
+    const cres = await api('/api/crypto/me');
+    const c = cres.crypto || {};
+
+    // 首次登录或密钥缺失 → 生成新身份
+    if (!c.cryptoEncPrivate || !c.cryptoSigPrivate) {
+      await window.E2EE.setupIdentity(api, res.user, password);
+      toast('已为你的账号生成加密密钥', 'success');
+    } else {
+      const u = await window.E2EE.unlock(
+        { ...c, username: res.user.username },
+        password
+      );
+      if (u.needSetup) {
+        await window.E2EE.setupIdentity(api, res.user, password);
+      }
+    }
+
+    // 缓存自己的公钥（发消息时 encryptMessage 需要用到）
+    const me = await api('/api/auth/me');
+    window.E2EE.cachePeerKeys([
+      {
+        id: me.user.id,
+        cryptoPublicKey: me.user.cryptoPublicKey,
+        cryptoSigPublicKey: me.user.cryptoSigPublicKey
+      }
+    ]);
+
+    window.WL_E2EE_READY = true;
+    await refreshPeerKeys();
+  } catch (e) {
+    console.warn('[e2ee] 初始化失败，本次会话以明文模式运行', e);
+    window.WL_E2EE_READY = false;
+    toast('端到端加密初始化失败，将以普通模式聊天', 'error');
+  }
+}
+
+/** 拉取好友与群成员的公钥并缓存 */
+async function refreshPeerKeys() {
+  if (!window.E2EE || !e2eeEnabled()) return;
+  try {
+    const ids = new Set();
+    for (const f of state.friends || []) ids.add(f.peer.id);
+    for (const g of state.groups || []) {
+      for (const m of g.members || []) ids.add(m.id);
+    }
+    if (state.user) ids.add(state.user.id);
+    if (!ids.size) return;
+    const res = await api('/api/crypto/keys?ids=' + [...ids].join(','));
+    window.E2EE.cachePeerKeys(res.keys || []);
+  } catch (e) {
+    console.warn('[e2ee] 拉取公钥失败', e);
+  }
+}
+
+/**
+ * 取当前会话的接收者列表（含自己，保证历史消息自己也能看）。
+ */
+function recipientsOfConversation() {
+  const cur = state.current;
+  if (!cur) return [];
+  const ids = new Set([state.user.id]);
+  if (cur.type === 'group') {
+    const g = state.groups.find((x) => x.id === cur.targetId);
+    if (g) for (const m of g.members || []) ids.add(m.id);
+    else ids.add(cur.targetId);
+  } else {
+    ids.add(cur.targetId);
+  }
+  return [...ids];
+}
+
+/**
+ * 加密一条消息（若已启用 E2EE）。
+ * @returns {Promise<{cipher:boolean, content:string, fileIv?:string, fileKey?:Uint8Array}>}
+ */
+async function encryptOutgoing({ content, type, fileKey, fileIv }) {
+  const cur = state.current;
+  if (!window.E2EE || !e2eeEnabled() || !window.WL_E2EE_READY) {
+    return { cipher: false, content, fileIv: fileIv || '' };
+  }
+  const recipients = recipientsOfConversation();
+  const res = await window.E2EE.encryptMessage({
+    content,
+    type,
+    conversationId: cur.conversationId,
+    senderId: state.user.id,
+    recipients,
+    fileKey
+  });
+  if (!res.ok) {
+    // 缺少对方公钥 → 明确报错，不静默降级
+    throw new Error('加密失败：' + res.reason + '（对方可能还没登录过一次以生成密钥）');
+  }
+  return { cipher: true, content: JSON.stringify(res.payload), fileIv: fileIv || '' };
+}
+
+/**
+ * 解密一条收到的消息。
+ * @returns {Promise<{content:string, type:string, fileKey:Uint8Array|null, cipher:boolean}>}
+ */
+async function decryptIncoming(m) {
+  if (!m.cipher) {
+    return { content: m.content, type: m.type, fileKey: null, cipher: false };
+  }
+  if (!window.E2EE || !window.WL_E2EE_READY) {
+    return { content: '🔒（请重新登录以解密此消息）', type: 'text', fileKey: null, cipher: true };
+  }
+  try {
+    const payload = JSON.parse(m.content);
+    // 找发送者的签名公钥
+    const senderKey = window.E2EE.peerKeysOf(m.from);
+    const res = await window.E2EE.decryptMessage(
+      payload,
+      m.conversationId,
+      m.from,
+      state.user.id,
+      senderKey ? senderKey.sigPublicKey : ''
+    );
+    if (!res.ok) {
+      return { content: '⚠️（消息解密失败）', type: 'text', fileKey: null, cipher: true };
+    }
+    return { content: res.content, type: res.type, fileKey: res.fileKey, cipher: true };
+  } catch (e) {
+    return { content: '⚠️（消息格式异常）', type: 'text', fileKey: null, cipher: true };
+  }
+}
 
 function onLogin(res) {
   state.token = res.token;
@@ -437,16 +602,57 @@ function refreshProfile() {
   $('profileNickname').value = state.user.nickname || '';
   renderColorRow();
   renderMyStickers();
+  refreshE2eeStatus();
 }
+
+/** 刷新端到端加密状态显示 */
+function refreshE2eeStatus() {
+  const toggle = $('e2eeToggle');
+  const status = $('e2eeStatus');
+  const sub = $('e2eeSubStatus');
+  if (toggle) toggle.checked = e2eeEnabled();
+  if (!status) return;
+  if (!e2eeEnabled()) {
+    status.textContent = '未启用（消息以普通方式传输）';
+  } else if (window.WL_E2EE_READY) {
+    status.textContent = '已启用，聊天内容在传输前加密，服务端无法读取明文';
+  } else {
+    status.textContent = '已启用但未解锁，请重新登录以解密消息';
+  }
+  if (sub) {
+    sub.textContent = e2eeEnabled()
+      ? '聊天内容在传输前加密，服务端无法读取明文'
+      : '关闭后消息将以未加密方式传输';
+  }
+}
+
+/** 端到端加密开关 */
+$('e2eeToggle')?.addEventListener('change', async (e) => {
+  const on = e.target.checked;
+  setE2eeEnabled(on);
+  if (on) {
+    toast('端到端加密已开启，正在初始化密钥…');
+    // 需要密码解锁，这里提示用户重新登录以完成解锁
+    openModal({
+      title: '开启端到端加密',
+      bodyHtml: '<div>端到端加密需要用你的密码解锁本机私钥。请重新登录一次以完成设置。</div>',
+      okText: '去登录',
+      cancelText: '稍后',
+      onOk: () => {
+        logout(true);
+        toast('请重新登录以完成加密设置');
+        return true;
+      }
+    });
+  } else {
+    toast('端到端加密已关闭', 'success');
+  }
+  refreshE2eeStatus();
+});
 
 /** 「发现」标签页刷新 */
 function refreshDiscover() {
-  const el = $('e2eeStatus');
-  if (el) {
-    el.textContent = window.WL_E2EE_READY
-      ? '已启用，聊天内容在传输前加密，服务端无法读取明文'
-      : '未启用';
-  }
+  refreshE2eeStatus();
 }
 
 $('profileBtn')?.addEventListener('click', () => {
@@ -682,6 +888,8 @@ async function refreshFriends() {
     state.requests = res.requests || [];
     state.sent = res.sent || [];
     renderFriends();
+    // 好友公钥更新（E2EE 需要）
+    refreshPeerKeys();
   } catch (e) {
     console.error(e);
   }
@@ -693,6 +901,8 @@ async function refreshGroups() {
     state.groups = res.groups || [];
     state.joinable = res.joinable || [];
     renderGroups();
+    // 群成员公钥更新（E2EE 需要）
+    refreshPeerKeys();
   } catch (e) {
     console.error(e);
   }
@@ -1062,35 +1272,21 @@ function dmId(a, b) {
 function renderMessages() {
   const box = $('chatBody');
   const me = state.user.id;
+
+  // 先用占位渲染（加密消息显示解密中），随后异步解密并替换
   box.innerHTML = state.messages.map((m) => {
     const mine = m.from === me;
-    const isEmoji = m.type === 'emoji';
-    const isImage = m.type === 'image';
-    const isSticker = m.type === 'sticker';
-
-    let bubbleInner = '';
-    let bubbleCls = 'msg-bubble';
-    if (isImage) {
-      bubbleCls += ' msg-image';
-      bubbleInner = `<img src="${escapeHtml(mediaUrl(m.content))}" alt="图片" loading="lazy" />`;
-    } else if (isSticker) {
-      bubbleCls += ' msg-sticker';
-      bubbleInner = `<img src="${escapeHtml(mediaUrl(m.content))}" alt="表情包" loading="lazy" />`;
-    } else {
-      bubbleInner = escapeHtml(m.content);
-    }
-    if (isEmoji) bubbleCls += ' emoji-msg';
-
     const avatar = avatarHtml(m.fromName, avatarColorOf(m.from), avatarUrlOf(m.from), 'msg-avatar');
+    const placeholder = m.cipher ? '<span class="msg-decrypting">🔒 解密中…</span>' : '';
 
     return `
-      <div class="msg-row ${mine ? 'mine' : ''}">
+      <div class="msg-row ${mine ? 'mine' : ''}" data-msg-id="${escapeHtml(m.id)}">
         <span class="msg-avatar-wrap" data-msg-user="${escapeHtml(m.from)}" title="查看资料">
           ${avatar}
         </span>
         <div class="msg-col">
           ${!mine ? `<div class="msg-sender">${escapeHtml(m.fromName)}</div>` : ''}
-          <div class="${bubbleCls}">${bubbleInner}</div>
+          <div class="msg-bubble" data-bubble>${placeholder}</div>
           <div class="msg-time">${formatTime(m.createdAt)}</div>
         </div>
       </div>`;
@@ -1101,6 +1297,71 @@ function renderMessages() {
   box.querySelectorAll('[data-msg-user]').forEach((el) => {
     el.addEventListener('click', () => openUserProfileById(el.dataset.msgUser));
   });
+
+  // 异步解密并填充气泡
+  decryptAndFill(box);
+}
+
+/**
+ * 解密消息并填充到气泡里。
+ */
+async function decryptAndFill(box) {
+  for (const m of state.messages) {
+    const row = box.querySelector(`[data-msg-id="${CSS.escape(m.id)}"]`);
+    if (!row) continue;
+    const bubble = row.querySelector('[data-bubble]');
+    if (!bubble) continue;
+
+    let content = m.content;
+    let type = m.type;
+    let fileKey = null;
+
+    if (m.cipher) {
+      const d = await decryptIncoming(m);
+      content = d.content;
+      type = d.type;
+      fileKey = d.fileKey;
+    }
+
+    let bubbleInner = '';
+    let bubbleCls = 'msg-bubble';
+    if (type === 'image') {
+      bubbleCls += ' msg-image';
+      bubbleInner = await renderMediaContent(content, fileKey, m.fileIv, '图片');
+    } else if (type === 'sticker') {
+      bubbleCls += ' msg-sticker';
+      bubbleInner = await renderMediaContent(content, fileKey, m.fileIv, '表情包');
+    } else {
+      bubbleInner = escapeHtml(content);
+    }
+    if (type === 'emoji') bubbleCls += ' emoji-msg';
+
+    bubble.className = bubbleCls;
+    bubble.innerHTML = bubbleInner;
+  }
+}
+
+/**
+ * 渲染图片 / 表情包内容。
+ * 加密消息需要用 fileKey 解密密文后再转成 blob URL。
+ */
+async function renderMediaContent(content, fileKey, fileIv, alt) {
+  if (fileKey && window.E2EE) {
+    try {
+      const url = content;
+      const res = await fetch(mediaUrl(url));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const encBytes = new Uint8Array(await res.arrayBuffer());
+      const plain = await window.E2EE.decryptFile(encBytes, fileKey, fileIv);
+      const blob = new Blob([plain], { type: 'application/octet-stream' });
+      const objUrl = URL.createObjectURL(blob);
+      return `<img src="${objUrl}" alt="${escapeHtml(alt)}" />`;
+    } catch (e) {
+      console.warn('[e2ee] 图片解密失败', e);
+      return '<span class="msg-decrypting">⚠️ 图片解密失败</span>';
+    }
+  }
+  return `<img src="${escapeHtml(mediaUrl(content))}" alt="${escapeHtml(alt)}" loading="lazy" />`;
 }
 
 /** 按用户 ID 打开个人资料卡 */
@@ -1158,7 +1419,7 @@ function avatarUrlOf(userId) {
 }
 
 /** 发送一条消息（走 WebSocket，低延迟） */
-async function sendMessage({ content, type = 'text' } = {}) {
+async function sendMessage({ content, type = 'text', fileKey = null, fileIv = '' } = {}) {
   const input = $('msgInput');
   const text = String(content == null ? input.value : content).trim();
   if (!text) return;
@@ -1172,19 +1433,24 @@ async function sendMessage({ content, type = 'text' } = {}) {
   }
 
   try {
+    // 端到端加密：先加密再发送
+    const enc = await encryptOutgoing({ content: text, type: msgType, fileKey, fileIv });
+    const body = {
+      toType: state.current.type,
+      toId: state.current.targetId,
+      content: enc.content,
+      type: msgType
+    };
+    if (enc.cipher) body.cipher = 1;
+    if (enc.fileIv) body.fileIv = enc.fileIv;
+
     if (state.ws && state.ws.readyState === 1) {
       state.ws.send(JSON.stringify({
         action: 'send_message',
-        toType: state.current.type,
-        toId: state.current.targetId,
-        content: text,
-        type: msgType
+        ...body
       }));
     } else {
-      const res = await api('/api/messages', {
-        method: 'POST',
-        body: { toType: state.current.type, toId: state.current.targetId, content: text, type: msgType }
-      });
+      const res = await api('/api/messages', { method: 'POST', body });
       if (res.message) {
         state.messages.push(res.message);
         renderMessages();
@@ -1438,6 +1704,28 @@ async function uploadImage(file, prefix) {
   return res.url;
 }
 
+/**
+ * 上传加密后的图片（端到端加密模式）。
+ * 服务端存的是密文，无法还原成图片。
+ * @returns {Promise<{url:string, fileKey:Uint8Array, fileIv:string}>}
+ */
+async function uploadEncryptedImage(file) {
+  const dataUrl = await readImageFile(file);
+  // dataURL -> 原始字节
+  const b64 = dataUrl.split(',')[1] || '';
+  const raw = window.E2EE.b64ToBytes(b64);
+
+  const fileKey = window.E2EE.newFileKey();
+  const enc = await window.E2EE.encryptFile(raw, fileKey);
+
+  toast('图片加密中并上传...');
+  const res = await api('/api/upload/enc', {
+    method: 'POST',
+    body: { data: window.E2EE.bytesToB64(enc.bytes) }
+  });
+  return { url: res.url, fileKey, fileIv: enc.iv };
+}
+
 /** 发送图片消息 */
 $('imageInput').addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
@@ -1445,9 +1733,15 @@ $('imageInput').addEventListener('change', async (e) => {
   if (!file) return;
   if (!state.current) return toast('请先进入聊天', 'error');
   try {
-    toast('图片上传中...');
-    const url = await uploadImage(file, 'img');
-    await sendMessage({ content: url, type: 'image' });
+    if (e2eeEnabled() && window.WL_E2EE_READY && window.E2EE) {
+      // 加密模式：先加密文件再上传，fileKey 随消息加密传递
+      const up = await uploadEncryptedImage(file);
+      await sendMessage({ content: up.url, type: 'image', fileKey: up.fileKey, fileIv: up.fileIv });
+    } else {
+      toast('图片上传中...');
+      const url = await uploadImage(file, 'img');
+      await sendMessage({ content: url, type: 'image' });
+    }
     toast('图片已发送', 'success');
   } catch (err) {
     toast(err.message || '图片发送失败', 'error');
@@ -2134,13 +2428,18 @@ function notifyNewMessage(m) {
   let title = '';
   let body = '';
 
+  // 加密消息不在通知里暴露密文
+  const bodyText = m.cipher
+    ? '🔒 [加密消息]'
+    : (m.type === 'image' ? '[图片]' : m.type === 'sticker' ? '[表情包]' : (m.content || ''));
+
   if (isGroup) {
     const g = state.groups.find((x) => x.id === m.toId);
     title = (g ? g.name : '群聊') + ' · ' + (m.fromName || '新消息');
-    body = m.type === 'image' ? '[图片]' : m.type === 'sticker' ? '[表情包]' : (m.content || '');
+    body = bodyText;
   } else {
     title = m.fromName || '新消息';
-    body = m.type === 'image' ? '[图片]' : m.type === 'sticker' ? '[表情包]' : (m.content || '');
+    body = bodyText;
   }
 
   playNotificationSound();
