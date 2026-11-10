@@ -1,0 +1,36 @@
+[Unit]
+Description=Weiliao Chat Server (Node.js)
+Documentation=https://github.com/lixiaofeng-ql/weiliao
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/weiliao/server
+
+# ---- 环境变量 ----
+# ADMIN_USER / ADMIN_PASS 是首次启动时创建的管理员账号
+# PORT 是服务监听端口（与 Nginx upstream 一致）
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=WL_DATA_DIR=/opt/weiliao/data
+Environment=WL_UPLOAD_DIR=/opt/weiliao/data/uploads
+Environment=ADMIN_USER=admin
+Environment=ADMIN_PASS=CHANGE_ME_TO_YOUR_PASSWORD
+Environment=WL_PUBLIC_URL=https://weiliao.example.com
+Environment=WL_PUBLIC_WS=wss://weiliao.example.com/ws
+
+ExecStart=/usr/bin/node src/index.js
+
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/weiliao/server.log
+StandardError=append:/var/log/weiliao/error.log
+
+# 优雅停机（给 15 秒把数据刷盘）
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

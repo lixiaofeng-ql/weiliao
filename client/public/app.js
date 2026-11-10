@@ -8,18 +8,55 @@
 // 后端地址：优先 config.js 中的配置，否则同源
 // 注意：API / WS_URL 使用 let，因为启动时还会异步刷新一次（绕过 Pages CDN 缓存）
 const CFG = window.WL_CONFIG || {};
-let API = (CFG.apiBase || '').replace(/\/$/, '');
-let WS_URL = CFG.wsBase
-  || (API
-        ? (API.startsWith('https') ? 'wss://' : 'ws://') + API.replace(/^https?:\/\//, '') + '/ws'
-        : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
 
-/** 根据 apiBase 推导 ws 地址 */
+/**
+ * 后端候选地址列表（按优先级）。
+ * - config.js 里可以写 apiBases: [主地址, 备用地址...]
+ * - 兼容旧写法 apiBase（单个地址）
+ * 这样「正式服务器」当主地址、「本地隧道」当备用地址，
+ * 主地址挂了自动切到备用，测试服务与生产服务互不影响。
+ */
+function normalizeApiBases(cfg) {
+  const list = [];
+  const push = (v) => {
+    if (!v) return;
+    const s = String(v).trim().replace(/\/$/, '');
+    if (s && !list.includes(s)) list.push(s);
+  };
+  if (Array.isArray(cfg.apiBases)) cfg.apiBases.forEach(push);
+  push(cfg.apiBase);
+  return list;
+}
+
+let API_CANDIDATES = normalizeApiBases(CFG);
+let API_INDEX = 0;
+let API = API_CANDIDATES[0] || '';
+
 function deriveWsUrl(base) {
   if (!base) {
     return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
   }
   return (base.startsWith('https') ? 'wss://' : 'ws://') + base.replace(/^https?:\/\//, '') + '/ws';
+}
+
+let WS_URL = CFG.wsBase
+  || (API
+    ? (API.startsWith('https') ? 'wss://' : 'ws://') + API.replace(/^https?:\/\//, '') + '/ws'
+    : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+
+/** 当前生效的后端（同步用） */
+function currentApiBase() {
+  return API_CANDIDATES[API_INDEX] || '';
+}
+
+/** 切换到下一个可用后端；没有更多候选时返回 false */
+function rotateApiBase() {
+  if (API_INDEX + 1 >= API_CANDIDATES.length) return false;
+  API_INDEX += 1;
+  API = API_CANDIDATES[API_INDEX];
+  WS_URL = deriveWsUrl(API);
+  console.warn('[api] 切换后端 ->', API);
+  return true;
 }
 
 /**
@@ -34,14 +71,33 @@ async function refreshRemoteConfig() {
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) return false;
     const text = await res.text();
+
     // 解析出 apiBase
     const m = text.match(/apiBase\s*:\s*['"]([^'"]+)['"]/);
     if (!m || !m[1]) return false;
     const newApi = m[1].replace(/\/$/, '');
-    if (!newApi || newApi === API) return false;
 
-    console.log('[config] 后端地址变更:', API, '->', newApi);
-    API = newApi;
+    // 解析候选列表 apiBases: ['a', 'b']
+    const listMatch = text.match(/apiBases\s*:\s*\[([^\]]*)\]/);
+    let candidates = [];
+    if (listMatch) {
+      candidates = listMatch[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^['"]|['"]$/g, '').replace(/\/$/, ''))
+        .filter(Boolean);
+    }
+    if (!candidates.length) candidates = [newApi];
+    if (!candidates.includes(newApi)) candidates.unshift(newApi);
+
+    const changed = candidates.join('|') !== API_CANDIDATES.join('|');
+    if (!changed) return false;
+
+    console.log('[config] 后端地址变更:', API_CANDIDATES.join(' , '), '->', candidates.join(' , '));
+    API_CANDIDATES = candidates;
+    // 优先保持当前正在工作的后端（若还在候选列表里）
+    const keep = API_CANDIDATES.indexOf(API);
+    API_INDEX = keep >= 0 ? keep : 0;
+    API = API_CANDIDATES[API_INDEX];
     WS_URL = deriveWsUrl(API);
     return true;
   } catch (e) {
@@ -282,29 +338,35 @@ function isNetworkError(err) {
 async function api(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+
+  const send = (base) => fetch(base + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+
   let res;
   try {
-    res = await fetch(API + path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined
-    });
+    res = await send(API);
   } catch (e) {
-    // 隧道地址可能已变更：刷新一次远程配置后重试
-    console.warn('[api] 连接失败，尝试刷新配置后重试', path);
+    // 主后端连不上：依次尝试备用后端
+    console.warn('[api] 连接失败，尝试切换后端', path);
+    let ok = false;
+    // 1) 先刷新一次远程配置（隧道地址可能已变更）
     if (await refreshRemoteConfig()) {
       try {
-        res = await fetch(API + path, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : undefined
-        });
-      } catch (e2) {
-        throw new Error('无法连接服务器，请检查网络或稍后重试');
-      }
-    } else {
-      throw new Error('无法连接服务器，请检查网络或稍后重试');
+        res = await send(currentApiBase());
+        ok = true;
+      } catch { /* 继续尝试备用 */ }
     }
+    // 2) 再轮换候选后端
+    while (!ok && rotateApiBase()) {
+      try {
+        res = await send(currentApiBase());
+        ok = true;
+      } catch { /* 试下一个 */ }
+    }
+    if (!ok) throw new Error('无法连接服务器，请检查网络或稍后重试');
   }
   let json = null;
   try { json = await res.json(); } catch { /* ignore */ }
@@ -2328,10 +2390,13 @@ function connectWS() {
         if (!state.token) return;
         // 重连前刷新一次配置，兼容隧道换址后 WS 仍指向旧地址
         await refreshRemoteConfig();
+        // 连续重连仍失败 → 切到备用后端（正式服务器 <-> 测试隧道）
+        if (state.wsRetry >= 3 && rotateApiBase()) {
+          state.wsRetry = 0;
+        }
         connectWS();
       }, delay);
     };
-
     ws.onerror = () => { try { ws.close(); } catch {} };
   } catch (e) {
     console.error('[ws] 创建失败', e);

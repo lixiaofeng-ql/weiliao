@@ -1,0 +1,45 @@
+# ============================================================
+# 微聊 - Cloudflare 命名隧道配置（服务器上运行，免开放 80/443）
+# ------------------------------------------------------------
+# 用法：
+#   1. cloudflared tunnel login
+#   2. cloudflared tunnel create weiliao
+#   3. 把本文件复制到 /etc/cloudflared/config.yml
+#   4. 把 credentials-file 路径改成实际的 json 路径
+#   5. cloudflared tunnel route dns weiliao chat.你的域名
+#   6. systemctl enable --now cloudflared
+# ============================================================
+
+tunnel: <隧道 UUID>
+credentials-file: /root/.cloudflared/<隧道 UUID>.json
+
+ingress:
+  # WebSocket（必须放在最前面，规则按顺序匹配）
+  - hostname: chat.你的域名
+    path: ^/ws$
+    service: http://127.0.0.1:3000
+    originRequest:
+      httpHostHeader: chat.你的域名
+
+  # API 接口
+  - hostname: chat.你的域名
+    path: ^/api/.*
+    service: http://127.0.0.1:3000
+    originRequest:
+      httpHostHeader: chat.你的域名
+
+  # 上传文件
+  - hostname: chat.你的域名
+    path: ^/uploads/.*
+    service: http://127.0.0.1:3000
+    originRequest:
+      httpHostHeader: chat.你的域名
+
+  # 前端静态资源
+  - hostname: chat.你的域名
+    service: http://127.0.0.1:3000
+    originRequest:
+      httpHostHeader: chat.你的域名
+
+  # 兜底：必须存在
+  - service: http_status:404

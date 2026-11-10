@@ -79,23 +79,50 @@ if (-not $url) {
 Log "公网地址: $url"
 
 # ---------- 4. 回写 config ----------
+# 保留「正式服务器」为第一候选，本地隧道作为第二候选（测试服务）。
+# 这样即使隧道掉线，客户端也会自动切到正式服务器；反之正式服务器异常时回退隧道。
 $wsHost = ([Uri]$url).Host
+
+# 读取旧配置里的第一个候选（正式服务器地址，通常是固定不变的）
+$primary = $url
+if (Test-Path $cfg) {
+  $old = Get-Content $cfg -Raw -ErrorAction SilentlyContinue
+  if ($old) {
+    $lm = [regex]::Match($old, "apiBases\s*:\s*\[([^\]]*)\]")
+    if ($lm.Success) {
+      $items = $lm.Groups[1].Value -split ',' | ForEach-Object {
+        $_.Trim().Trim("'", '"').TrimEnd('/')
+      } | Where-Object { $_ }
+      if ($items.Count -ge 1 -and $items[0] -ne $url) { $primary = $items[0] }
+    }
+  }
+}
+
 $content = @"
 /**
  * 微聊 前端运行时配置
  * ---------------------------------------------------------------
- * 本文件由 scripts/start-local.ps1 自动生成，请勿手工修改。
- * 重新运行该脚本可获取新的公网地址。
+ * 本文件由 scripts/auto-start.ps1 自动生成，请勿手工修改。
+ *
+ * apiBases：后端候选地址，按优先级排列。
+ *   [0] 正式服务器（固定地址，长期有效）
+ *   [1] 本地 Cloudflare 隧道（测试服务，地址会变）
+ * 前端会自动探测，主地址不通时无缝切到备用地址。
  */
 window.WL_CONFIG = {
-  // 后端接口根地址
-  apiBase: '$url',
+  // 后端候选地址（按优先级）
+  apiBases: [
+    '$primary',
+    '$url'
+  ],
+  // 主后端接口根地址（兼容旧版读取方式）
+  apiBase: '$primary',
   // WebSocket 地址
   wsBase: 'wss://$wsHost/ws'
 };
 "@
 [IO.File]::WriteAllText($cfg, $content, [Text.UTF8Encoding]::new($false))
-Log 'config.js 已更新'
+Log "config.js 已更新 (主: $primary / 备: $url)"
 
 # ---------- 5. 推送（可失败，不影响本地使用） ----------
 try {
