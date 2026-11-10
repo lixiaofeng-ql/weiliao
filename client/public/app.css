@@ -365,6 +365,34 @@ input, textarea { font-family: inherit; }
   gap: 14px;
 }
 
+/* 未加密会话的常驻警示条 */
+.e2ee-warn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fff7e6;
+  border-bottom: 1px solid #ffe0a3;
+  color: #a15c00;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.e2ee-warn.hidden { display: none; }
+.e2ee-warn-icon { flex: none; font-size: 14px; }
+.e2ee-warn-text { flex: 1; min-width: 0; }
+.e2ee-warn-btn {
+  flex: none;
+  border: 1px solid #f0b357;
+  background: #fff;
+  color: #a15c00;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.e2ee-warn-btn:hover { background: #fff1d6; }
+
 .msg-row { display: flex; gap: 10px; align-items: flex-start; animation: msgIn .22s ease; }
 @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .msg-row.mine { flex-direction: row-reverse; }

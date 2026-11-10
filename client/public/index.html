@@ -158,6 +158,11 @@
 
       <!-- 页面：聊天窗口 -->
       <section class="page page-chat hidden" id="chatPage">
+        <div class="e2ee-warn hidden" id="chatE2eeWarn">
+          <span class="e2ee-warn-icon">🔓</span>
+          <span class="e2ee-warn-text" id="chatE2eeWarnText">本会话未启用端到端加密，消息将以明文传输</span>
+          <button class="e2ee-warn-btn" id="chatE2eeFixBtn">去开启</button>
+        </div>
         <div class="chat-body" id="chatBody"></div>
 
         <div class="emoji-panel hidden" id="emojiPanel">

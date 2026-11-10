@@ -515,11 +515,13 @@ async function initE2EE(res, password) {
 
       window.WL_E2EE_READY = true;
       await refreshPeerKeys();
+      updateChatE2eeWarn();
     } catch (e) {
       // 最常见原因：管理员重置过密码 → 私钥密文解不开
       console.warn('[e2ee] 初始化失败，本次会话以明文模式运行', e);
       window.WL_E2EE_READY = false;
       const isKeyProblem = /operation failed|decrypt|OperationError/i.test(String(e && e.message));
+      updateChatE2eeWarn();
       toast(
         isKeyProblem
           ? '端到端加密解锁失败（密码可能已被重置）。为保证安全，本次会话按明文模式运行。'
@@ -546,6 +548,8 @@ async function refreshPeerKeys() {
     if (!ids.size) return;
     const res = await api('/api/crypto/keys?ids=' + [...ids].join(','));
     window.E2EE.cachePeerKeys(res.keys || []);
+    // 对方公钥可能刚生成 → 刷新警示条
+    updateChatE2eeWarn();
   } catch (e) {
     console.warn('[e2ee] 拉取公钥失败', e);
   }
@@ -566,6 +570,42 @@ function recipientsOfConversation() {
     ids.add(cur.targetId);
   }
   return [...ids];
+}
+
+/**
+ * 更新聊天页顶部的「未加密」常驻警示条。
+ * 让用户永远知道当前会话是不是加密的，避免静默降级。
+ */
+function updateChatE2eeWarn() {
+  const bar = $('chatE2eeWarn');
+  const txt = $('chatE2eeWarnText');
+  if (!bar || !txt) return;
+  const cur = state.current;
+
+  let reason = '';
+  if (!window.E2EE || !e2eeEnabled()) {
+    reason = '端到端加密已关闭，本会话消息将以明文传输';
+  } else if (!window.WL_E2EE_READY) {
+    reason = '端到端加密未解锁，本会话消息将以明文传输（请重新登录或解锁私钥）';
+  } else if (cur) {
+    // 检查会话成员是否都有公钥
+    const missing = recipientsOfConversation()
+      .filter((id) => id !== state.user.id)
+      .filter((id) => {
+        const k = window.E2EE.peerKeysOf && window.E2EE.peerKeysOf(id);
+        return !k || !k.publicKey;
+      });
+    if (missing.length) {
+      reason = '对方尚未生成加密密钥，本会话消息将以明文传输';
+    }
+  }
+
+  if (reason) {
+    txt.textContent = reason;
+    bar.classList.remove('hidden');
+  } else {
+    bar.classList.add('hidden');
+  }
 }
 
 /**
@@ -1377,7 +1417,20 @@ async function openChat(type, targetId, title) {
   } catch (e) {
     toast(e.message, 'error');
   }
+
+  // 更新「未加密」警示条
+  updateChatE2eeWarn();
 }
+
+/** 警示条上的「去开启」按钮 → 跳到 E2EE 设置 */
+$('chatE2eeFixBtn')?.addEventListener('click', () => {
+  switchTab('me');
+  // 「我」页面里滚到端到端加密开关
+  setTimeout(() => {
+    const t = $('e2eeToggle');
+    if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 120);
+});
 
 function dmId(a, b) {
   const ids = [a, b].sort();
