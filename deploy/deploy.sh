@@ -99,6 +99,7 @@ else
   mkdir -p "$INSTALL_DIR"
   cp -r "$SRC_DIR/server" "$INSTALL_DIR/" 2>/dev/null || true
   cp -r "$SRC_DIR/client" "$INSTALL_DIR/" 2>/dev/null || true
+  cp -r "$SRC_DIR/deploy" "$INSTALL_DIR/" 2>/dev/null || true
   cp -r "$SRC_DIR/package.json" "$INSTALL_DIR/" 2>/dev/null || true
   rm -rf "$INSTALL_DIR/server/node_modules"
 fi
@@ -110,13 +111,42 @@ npm install --omit=dev --no-audit --no-fund
 
 # ------------------------------------------------------------
 log "5/8 注册 systemd 服务"
-sed -e "s|^Environment=PORT=.*|Environment=PORT=3000|" \
-    -e "s|^Environment=ADMIN_PASS=.*|Environment=ADMIN_PASS=$ADMIN_PASS|" \
-    -e "s|^Environment=WL_PUBLIC_URL=.*|Environment=WL_PUBLIC_URL=https://$DOMAIN|" \
-    -e "s|^Environment=WL_PUBLIC_WS=.*|Environment=WL_PUBLIC_WS=wss://$DOMAIN/ws|" \
-    "$INSTALL_DIR/deploy/systemd/weiliao.service" > /etc/systemd/system/weiliao.service
-# systemd 的 Environment 不支持变量插值中的特殊字符，做一次转义
-sed -i "s|Environment=ADMIN_PASS=.*|Environment=ADMIN_PASS=\"$(printf '%s' "$ADMIN_PASS" | sed 's/[\\"\\\\]/\\\\&/g')\"|" /etc/systemd/system/weiliao.service
+
+# 用独立的环境变量文件承载密码，避免 systemd Environment= 的转义问题
+# systemd 的 EnvironmentFile 支持单引号包裹（内容原样保留，反斜杠无特殊含义），
+# 双引号包裹时需转义 " 和 \ 。这里按需选择。
+cat > /etc/weiliao.env <<ENVEOF
+NODE_ENV=production
+PORT=3000
+WL_DATA_DIR=$DATA_DIR
+WL_UPLOAD_DIR=$DATA_DIR/uploads
+ADMIN_USER=admin
+WL_PUBLIC_URL=https://$DOMAIN
+WL_PUBLIC_WS=wss://$DOMAIN/ws
+ENVEOF
+
+# 密码单独处理，避开 heredoc 的变量展开
+if [[ "$ADMIN_PASS" == *"'"* ]]; then
+  # 含单引号 → 用双引号包裹并转义 " 与 \
+  _pw=${ADMIN_PASS//\\/\\\\}
+  _pw=${_pw//\"/\\\"}
+  printf 'ADMIN_PASS="%s"\n' "$_pw" >> /etc/weiliao.env
+else
+  # 不含单引号 → 用单引号包裹，内容原样保留（最安全）
+  printf "ADMIN_PASS='%s'\n" "$ADMIN_PASS" >> /etc/weiliao.env
+fi
+chmod 600 /etc/weiliao.env
+
+# 生成 service 文件（模板里的 Environment= 行全部用 EnvironmentFile 覆盖）
+sed \
+  -e '/^Environment=/d' \
+  -e "s|^WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR/server|" \
+  -e "s|^EnvironmentFile=.*|EnvironmentFile=/etc/weiliao.env|" \
+  "$INSTALL_DIR/deploy/systemd/weiliao.service" > /etc/systemd/system/weiliao.service
+
+# 确保模板里有 EnvironmentFile 这一行
+grep -q '^EnvironmentFile=' /etc/systemd/system/weiliao.service || \
+  sed -i '/^\[Service\]/a EnvironmentFile=/etc/weiliao.env' /etc/systemd/system/weiliao.service
 
 systemctl daemon-reload
 systemctl enable weiliao

@@ -9,17 +9,9 @@ Type=simple
 User=root
 WorkingDirectory=/opt/weiliao/server
 
-# ---- 环境变量 ----
-# ADMIN_USER / ADMIN_PASS 是首次启动时创建的管理员账号
-# PORT 是服务监听端口（与 Nginx upstream 一致）
-Environment=NODE_ENV=production
-Environment=PORT=3000
-Environment=WL_DATA_DIR=/opt/weiliao/data
-Environment=WL_UPLOAD_DIR=/opt/weiliao/data/uploads
-Environment=ADMIN_USER=admin
-Environment=ADMIN_PASS=CHANGE_ME_TO_YOUR_PASSWORD
-Environment=WL_PUBLIC_URL=https://weiliao.example.com
-Environment=WL_PUBLIC_WS=wss://weiliao.example.com/ws
+# 环境变量（含管理员密码）统一放在独立文件，避免 Environment= 的转义问题
+# 由 deploy.sh 生成，权限 600
+EnvironmentFile=/etc/weiliao.env
 
 ExecStart=/usr/bin/node src/index.js
 
