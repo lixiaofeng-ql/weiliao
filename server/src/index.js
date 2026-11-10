@@ -213,11 +213,11 @@ app.get('/api/stickers', auth, (req, res) => {
 });
 
 app.post('/api/stickers', auth, (req, res) => {
-  const { url, name } = req.body || {};
+  const { url, name, fileKeyIv, fileKeyCt, fileIv } = req.body || {};
   if (!url || !url.startsWith('/uploads/')) {
     return res.json({ success: false, message: '表情包地址不合法' });
   }
-  const result = addSticker(req.user.id, { url, name });
+  const result = addSticker(req.user.id, { url, name, fileKeyIv, fileKeyCt, fileIv });
   if (result.error) return res.json({ success: false, message: result.error });
   res.json({ success: true, sticker: result.sticker });
 });

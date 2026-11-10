@@ -193,6 +193,8 @@ const state = {
   // 解锁后的私钥（CryptoKey 对象，仅存在于内存）
   encPrivateKey: null,
   sigPrivateKey: null,
+  // KEK（由密码派生），用于包裹自定义表情包的 fileKey
+  kek: null,
   // 公钥缓存：userId -> { publicKey, sigPublicKey }
   peerKeys: new Map(),
   // 私钥密文缓存（解锁后不再需要）
@@ -219,6 +221,7 @@ async function unlock(me, password) {
   }
 
   const kek = await deriveKek(password, me.username, state.saltHex);
+  state.kek = kek;
   const encPrivRaw = await unwrap(JSON.parse(me.cryptoEncPrivate), kek);
   const sigPrivRaw = await unwrap(JSON.parse(me.cryptoSigPrivate), kek);
 
@@ -245,6 +248,7 @@ async function unlock(me, password) {
 async function setupIdentity(api, me, password) {
   const salt = randomHex(16);
   const kek = await deriveKek(password, me.username, salt);
+  state.kek = kek;
   const ident = await generateIdentity(kek);
   await api('/api/crypto/keys', {
     method: 'POST',
@@ -482,6 +486,32 @@ async function decryptFile(bytes, fileKey, ivB64) {
   return new Uint8Array(pt);
 }
 
+/* ---------------- 自定义表情包（本地加密存储） ---------------- */
+
+/**
+ * 用 KEK 包裹 fileKey。
+ * 自定义表情包只存在自己的账号下，所以用密码派生的 KEK 加密 fileKey 即可，
+ * 服务端只拿到密文，管理员/数据库泄露也还原不出图片。
+ */
+async function wrapFileKey(fileKey) {
+  if (!state.kek) return { error: '加密未就绪' };
+  const wrapped = await wrap(fileKey, state.kek);
+  return { ok: true, keyIv: wrapped.iv, keyCt: wrapped.ct };
+}
+
+/**
+ * 用 KEK 解开 fileKey。
+ */
+async function unwrapFileKey(keyIv, keyCt) {
+  if (!state.kek) return { error: '加密未就绪' };
+  try {
+    const bytes = await unwrap({ iv: keyIv, ct: keyCt }, state.kek);
+    return { ok: true, fileKey: bytes };
+  } catch (e) {
+    return { error: '解密失败：' + (e && e.message ? e.message : '未知错误') };
+  }
+}
+
 /** 把 Uint8Array 转成 base64（便于放进 JSON 载荷） */
 function bytesToB64(bytes) {
   return b64encode(bytes);
@@ -512,6 +542,8 @@ window.E2EE = {
   newFileKey: newFileKey,
   encryptFile: encryptFile,
   decryptFile: decryptFile,
+  wrapFileKey: wrapFileKey,
+  unwrapFileKey: unwrapFileKey,
   bytesToB64: bytesToB64,
   b64ToBytes: b64ToBytes
 };

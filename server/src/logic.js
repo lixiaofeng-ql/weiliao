@@ -196,14 +196,24 @@ export function isGroupMember(groupId, userId) {
 
 // ============ 自定义表情包 ============
 
-/** 添加一张自定义表情包 */
-export function addSticker(userId, { url, name = '' }) {
+/**
+ * 添加一张自定义表情包。
+ * 端到端加密模式下：url 指向服务器上的密文文件，
+ * fileKeyIv / fileKeyCt 是被 KEK 包裹的 fileKey，服务器无法解开。
+ */
+export function addSticker(userId, { url, name = '', fileKeyIv = '', fileKeyCt = '', fileIv = '' }) {
   if (!url) return { error: '缺少表情包图片' };
+  if (!url.startsWith('/uploads/')) return { error: '表情包地址不合法' };
   const sticker = {
     id: nextId('s'),
     userId,
     url,
     name: String(name).trim().slice(0, 30),
+    // 被 KEK 包裹的 fileKey（加密表情包才有）
+    fileKeyIv: fileKeyIv || '',
+    fileKeyCt: fileKeyCt || '',
+    // 图片密文的 GCM IV
+    fileIv: fileIv || '',
     createdAt: Date.now()
   };
   db().stickers.push(sticker);
