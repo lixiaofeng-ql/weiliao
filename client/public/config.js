@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://tube-reduced-province-whom.trycloudflare.com'
+    'https://sas-concerns-assessment-ask.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://tube-reduced-province-whom.trycloudflare.com/ws'
+  wsBase: 'wss://sas-concerns-assessment-ask.trycloudflare.com/ws'
 };
