@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://allocation-columns-steal-terminal.trycloudflare.com'
+    'https://offices-everybody-font-lucy.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://allocation-columns-steal-terminal.trycloudflare.com/ws'
+  wsBase: 'wss://offices-everybody-font-lucy.trycloudflare.com/ws'
 };
