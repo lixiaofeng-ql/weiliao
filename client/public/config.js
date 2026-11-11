@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://previous-industrial-openings-transparency.trycloudflare.com'
+    'https://sequence-sensor-guestbook-protocol.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://previous-industrial-openings-transparency.trycloudflare.com/ws'
+  wsBase: 'wss://sequence-sensor-guestbook-protocol.trycloudflare.com/ws'
 };
