@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://guided-trace-days-combine.trycloudflare.com'
+    'https://called-alfred-offices-pix.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://guided-trace-days-combine.trycloudflare.com/ws'
+  wsBase: 'wss://called-alfred-offices-pix.trycloudflare.com/ws'
 };
