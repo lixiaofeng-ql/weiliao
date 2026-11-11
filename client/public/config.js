@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://knight-changing-quiet-related.trycloudflare.com'
+    'https://developmental-badge-players-metro.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://knight-changing-quiet-related.trycloudflare.com/ws'
+  wsBase: 'wss://developmental-badge-players-metro.trycloudflare.com/ws'
 };
