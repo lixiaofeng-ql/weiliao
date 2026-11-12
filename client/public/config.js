@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://animals-tourism-thick-pan.trycloudflare.com'
+    'https://acute-valves-ages-capabilities.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://animals-tourism-thick-pan.trycloudflare.com/ws'
+  wsBase: 'wss://acute-valves-ages-capabilities.trycloudflare.com/ws'
 };
