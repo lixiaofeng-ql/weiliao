@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://pray-iowa-integration-dark.trycloudflare.com'
+    'https://occurred-gets-brooklyn-build.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://pray-iowa-integration-dark.trycloudflare.com/ws'
+  wsBase: 'wss://occurred-gets-brooklyn-build.trycloudflare.com/ws'
 };
