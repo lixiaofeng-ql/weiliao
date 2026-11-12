@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://gazette-approaches-eating-barriers.trycloudflare.com'
+    'https://agrees-reviewing-gravity-packed.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://gazette-approaches-eating-barriers.trycloudflare.com/ws'
+  wsBase: 'wss://agrees-reviewing-gravity-packed.trycloudflare.com/ws'
 };
