@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://mechanics-escape-crawford-diego.trycloudflare.com'
+    'https://evans-falling-rogers-timeline.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://mechanics-escape-crawford-diego.trycloudflare.com/ws'
+  wsBase: 'wss://evans-falling-rogers-timeline.trycloudflare.com/ws'
 };
