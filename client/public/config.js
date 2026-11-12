@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://displaying-implies-stomach-creek.trycloudflare.com'
+    'https://solved-settled-jobs-cathedral.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://displaying-implies-stomach-creek.trycloudflare.com/ws'
+  wsBase: 'wss://solved-settled-jobs-cathedral.trycloudflare.com/ws'
 };
