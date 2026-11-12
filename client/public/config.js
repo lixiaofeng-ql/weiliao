@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://distant-foo-producers-infants.trycloudflare.com'
+    'https://students-accuracy-except-replication.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://distant-foo-producers-infants.trycloudflare.com/ws'
+  wsBase: 'wss://students-accuracy-except-replication.trycloudflare.com/ws'
 };
