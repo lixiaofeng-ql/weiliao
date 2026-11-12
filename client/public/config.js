@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://tube-anything-chocolate-modeling.trycloudflare.com'
+    'https://orleans-broad-com-investment.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://tube-anything-chocolate-modeling.trycloudflare.com/ws'
+  wsBase: 'wss://orleans-broad-com-investment.trycloudflare.com/ws'
 };
