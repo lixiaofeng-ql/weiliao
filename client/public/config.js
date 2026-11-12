@@ -12,10 +12,10 @@ window.WL_CONFIG = {
   // 后端候选地址（按优先级）
   apiBases: [
     'https://occupied-invision-smart-thesaurus.trycloudflare.com',
-    'https://finite-jesse-nasa-passing.trycloudflare.com'
+    'https://named-grew-arbor-api.trycloudflare.com'
   ],
   // 主后端接口根地址（兼容旧版读取方式）
   apiBase: 'https://occupied-invision-smart-thesaurus.trycloudflare.com',
   // WebSocket 地址
-  wsBase: 'wss://finite-jesse-nasa-passing.trycloudflare.com/ws'
+  wsBase: 'wss://named-grew-arbor-api.trycloudflare.com/ws'
 };
